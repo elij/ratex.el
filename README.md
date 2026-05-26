@@ -79,6 +79,15 @@ Or enable it automatically for common text/math modes:
 (global-ratex-mode 1)
 ```
 
+In Org files, you can also control RaTeX per file with a keyword:
+
+```org
+#+ratex: t
+```
+
+Use `#+ratex: nil` (or `off`) to disable it for a specific Org file, even when
+`global-ratex-mode` is enabled.
+
 Equivalent explicit hook setup:
 
 ```elisp

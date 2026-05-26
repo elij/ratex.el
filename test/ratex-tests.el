@@ -151,6 +151,26 @@
     (setq major-mode 'text-mode)
     (should-not (ratex--auto-enable-p))))
 
+(ert-deftest ratex-org-keyword-state-parses-enable-and-disable ()
+  (with-temp-buffer
+    (org-mode)
+    (insert "#+ratex:\n")
+    (should (eq (ratex--org-keyword-state) 'enable)))
+  (with-temp-buffer
+    (org-mode)
+    (insert "#+ratex: off\n")
+    (should (eq (ratex--org-keyword-state) 'disable)))
+  (with-temp-buffer
+    (org-mode)
+    (insert "#+title: demo\n")
+    (should-not (ratex--org-keyword-state))))
+
+(ert-deftest ratex-auto-enable-p-respects-org-disable-keyword ()
+  (with-temp-buffer
+    (org-mode)
+    (insert "#+ratex: nil\n")
+    (should-not (ratex--auto-enable-p))))
+
 (ert-deftest ratex-global-mode-enables-supported-buffer ()
   (with-temp-buffer
     (setq major-mode 'markdown-mode)
@@ -160,6 +180,29 @@
                    (setq enabled arg))))
         (ratex--maybe-enable)
         (should (equal enabled 1))))))
+
+(ert-deftest ratex-apply-org-keyword-enables-mode ()
+  (with-temp-buffer
+    (org-mode)
+    (insert "#+ratex: t\n")
+    (let (enabled)
+      (cl-letf (((symbol-function 'ratex-mode)
+                 (lambda (&optional arg)
+                   (setq enabled arg))))
+        (ratex--apply-org-keyword)
+        (should (equal enabled 1))))))
+
+(ert-deftest ratex-apply-org-keyword-disables-mode ()
+  (with-temp-buffer
+    (org-mode)
+    (insert "#+ratex: disabled\n")
+    (let ((ratex-mode t)
+          disabled)
+      (cl-letf (((symbol-function 'ratex-mode)
+                 (lambda (&optional arg)
+                   (setq disabled arg))))
+        (ratex--apply-org-keyword)
+        (should (equal disabled -1))))))
 
 (ert-deftest ratex-json-response-uses-symbol-keys ()
   (let* ((json-object-type 'alist)
