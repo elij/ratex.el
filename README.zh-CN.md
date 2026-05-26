@@ -173,8 +173,12 @@ M-x ratex-download-backend
 - `ratex-font-dir`：KaTeX `.ttf` 字体文件所在目录（默认为仓库内的 `vendor/ratex-core/fonts`）
 - `ratex-font-size`：发送给 backend 的 SVG 字号
 - `ratex-svg-padding`：发送给 backend 的 SVG 边距
-- `ratex-render-color`：公式默认渲染颜色（例如 `#e6e6e6`、`red`、`[RGB]178,34,34`）
+- `ratex-dark-render-color` / `ratex-light-render-color`：会根据当前 frame 的 `background-mode` 选择的默认公式颜色
+- `ratex-render-color`：公式渲染颜色覆盖；当它为 `nil` 时，会使用上面的深色/浅色默认值
 - `ratex-edit-preview`：编辑时的预览样式（`nil`、`posframe` 或 `minibuffer`）
+- `ratex-dark-posframe-background-color` / `ratex-light-posframe-background-color`：会根据当前 frame 的 `background-mode` 选择的 posframe 背景色
+- `ratex-posframe-background-color`：posframe 背景色覆盖；当它为 `nil` 时，会使用上面的深色/浅色默认值
+- `ratex-theme-change-refresh-scope`：切换主题后是刷新所有 `ratex-mode` buffer、只刷新当前 buffer，还是不自动刷新
 - `ratex-auto-download-backend`：是否自动下载 backend
 - `ratex-backend-binary`：backend 二进制路径
 
@@ -192,10 +196,28 @@ M-x ratex-download-backend
 (use-package ratex
   :config
   (setq ratex-backend-root "~/.emacs.d/straight/repos/ratex.el/")
-  (setq ratex-render-color "white")
+  (setq ratex-dark-render-color "white")
+  (setq ratex-light-render-color "black")
   (setq ratex-edit-preview 'minibuffer)
-  (setq ratex-posframe-background-color "black")
+  (setq ratex-dark-posframe-background-color "black")
+  (setq ratex-light-posframe-background-color "white")
   (ratex-setup))
+```
+
+如果你想无视当前主题、强制使用单一颜色，可以直接设置覆盖变量：
+
+```elisp
+(setq ratex-render-color "white")
+(setq ratex-posframe-background-color "black")
+```
+
+如果你想控制切换主题后的自动刷新行为，可以这样设置：
+
+```elisp
+(setq ratex-theme-change-refresh-scope 'all)     ; 默认值
+;; 或：
+;; (setq ratex-theme-change-refresh-scope 'current)
+;; (setq ratex-theme-change-refresh-scope nil)
 ```
 
 如果后端找不到 KaTeX 字体（例如使用下载的 Release 二进制不在仓库目录下），

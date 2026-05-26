@@ -11,11 +11,16 @@
 
 (defvar ratex-mode)
 (defvar ratex-render-color)
+(defvar ratex-dark-render-color)
+(defvar ratex-light-render-color)
 (defvar ratex-edit-preview)
 (defvar ratex-font-dir)
 (defvar ratex-posframe-background-color)
+(defvar ratex-dark-posframe-background-color)
+(defvar ratex-light-posframe-background-color)
 (defvar ratex-posframe-border-color)
 (defvar ratex-posframe-poshandler)
+(defvar ratex-theme-change-refresh-scope)
 (defvar-local ratex--render-cache nil)
 (defvar-local ratex--inflight-requests nil)
 (defvar-local ratex--inflight-waiters nil)
@@ -31,6 +36,7 @@
 (defvar-local ratex--refresh-scan-timer nil)
 (defvar-local ratex--refresh-queue nil)
 (defvar-local ratex--refresh-generation 0)
+(defvar ratex--theme-refresh-timer nil)
 (defconst ratex--posframe-buffer " *ratex-preview*")
 (defconst ratex--posframe-offset-y 5)
 (defconst ratex--refresh-batch-size 50)
@@ -92,6 +98,35 @@ currently under point."
       (when (ratex--preview-enabled-p)
         (ratex--handle-preview-at-point current))
       (setq ratex--active-fragment current))))
+
+(defun ratex--refresh-buffer-previews (buffer)
+  "Refresh previews in BUFFER when `ratex-mode' is enabled there."
+  (when (buffer-live-p buffer)
+    (with-current-buffer buffer
+      (when (bound-and-true-p ratex-mode)
+        (ratex-refresh-previews t)))))
+
+(defun ratex--run-theme-refresh (origin-buffer scope)
+  "Refresh previews after a theme change from ORIGIN-BUFFER using SCOPE."
+  (setq ratex--theme-refresh-timer nil)
+  (pcase scope
+    ('all
+     (dolist (buffer (buffer-list))
+       (ratex--refresh-buffer-previews buffer)))
+    ('current
+     (ratex--refresh-buffer-previews origin-buffer))))
+
+(defun ratex--schedule-theme-refresh (&rest _args)
+  "Schedule a RaTeX refresh after a theme change."
+  (when (timerp ratex--theme-refresh-timer)
+    (cancel-timer ratex--theme-refresh-timer))
+  (when ratex-theme-change-refresh-scope
+    (setq ratex--theme-refresh-timer
+          (run-with-idle-timer
+           0.1 nil
+           #'ratex--run-theme-refresh
+           (current-buffer)
+           ratex-theme-change-refresh-scope))))
 
 (defun ratex--visible-fragments ()
   "Return fragments in the visible portion of the selected window."
@@ -302,16 +337,37 @@ currently under point."
   (list (string-trim (plist-get fragment :content))
         ratex-font-size
         ratex-svg-padding
-        (ratex--normalized-render-color)
+        (ratex--effective-render-color)
         (ratex--normalized-font-dir)))
 
-(defun ratex--normalized-render-color ()
-  "Return a normalized render color string, or nil."
-  (let ((value ratex-render-color))
-    (when (stringp value)
-      (let ((trimmed (string-trim value)))
-        (unless (string-empty-p trimmed)
-          trimmed)))))
+(defun ratex--normalize-color-value (value)
+  "Return VALUE as a trimmed color string, or nil."
+  (when (stringp value)
+    (let ((trimmed (string-trim value)))
+      (unless (string-empty-p trimmed)
+        trimmed))))
+
+(defun ratex--background-mode ()
+  "Return the current frame background mode."
+  (if (eq (frame-parameter nil 'background-mode) 'dark)
+      'dark
+    'light))
+
+(defun ratex--effective-render-color ()
+  "Return the effective render color string, or nil."
+  (or (ratex--normalize-color-value ratex-render-color)
+      (ratex--normalize-color-value
+       (if (eq (ratex--background-mode) 'dark)
+           ratex-dark-render-color
+         ratex-light-render-color))))
+
+(defun ratex--effective-posframe-background-color ()
+  "Return the effective posframe background color string, or nil."
+  (or (ratex--normalize-color-value ratex-posframe-background-color)
+      (ratex--normalize-color-value
+       (if (eq (ratex--background-mode) 'dark)
+           ratex-dark-posframe-background-color
+         ratex-light-posframe-background-color))))
 
 (defun ratex--normalized-font-dir ()
   "Return normalized font directory for cache keys, or nil."
@@ -367,7 +423,7 @@ currently under point."
                    (latex . ,(string-trim (plist-get fragment :content)))
                    (font_size . ,ratex-font-size)
                    (padding . ,ratex-svg-padding)
-                   (color . ,(ratex--normalized-render-color))
+                   (color . ,(ratex--effective-render-color))
                    (embed_glyphs . t))))
     (when ratex-font-dir
       (nconc payload `((font_dir . ,(expand-file-name ratex-font-dir)))))
@@ -496,7 +552,7 @@ currently under point."
                          #'ratex-posframe-poshandler-point-bottom-left-corner-offset)
          :border-width 1
          :border-color ratex-posframe-border-color
-         :background-color ratex-posframe-background-color)
+         :background-color (ratex--effective-posframe-background-color))
         (setq ratex--posframe-visible t)
         (setq ratex--posframe-fragment fragment)
         t))))
@@ -567,7 +623,7 @@ currently under point."
                          #'ratex-posframe-poshandler-point-bottom-left-corner-offset)
          :border-width 1
          :border-color ratex-posframe-border-color
-         :background-color ratex-posframe-background-color)
+         :background-color (ratex--effective-posframe-background-color))
       (ratex--hide-posframe))))
 
 (defun ratex--update-minibuffer-preview ()
@@ -595,6 +651,10 @@ currently under point."
       (with-current-buffer buffer
         (when ratex-mode
           (ratex--hide-edit-preview))))))
+
+(advice-add 'load-theme :after #'ratex--schedule-theme-refresh)
+(advice-add 'enable-theme :after #'ratex--schedule-theme-refresh)
+(advice-add 'disable-theme :after #'ratex--schedule-theme-refresh)
 
 (provide 'ratex-render)
 

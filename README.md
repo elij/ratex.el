@@ -178,8 +178,12 @@ Useful variables:
 - `ratex-font-dir`: directory containing KaTeX `.ttf` font files (defaults to `vendor/ratex-core/fonts` inside the repo)
 - `ratex-font-size`: SVG font size sent to the backend
 - `ratex-svg-padding`: SVG padding sent to the backend
-- `ratex-render-color`: default formula color (for example `#e6e6e6`, `red`, `[RGB]178,34,34`)
+- `ratex-dark-render-color` / `ratex-light-render-color`: theme-aware default formula colors selected from the current frame's `background-mode`
+- `ratex-render-color`: explicit formula color override; when nil, the dark/light defaults above are used
 - `ratex-edit-preview`: edit preview style (`nil`, `posframe`, or `minibuffer`)
+- `ratex-dark-posframe-background-color` / `ratex-light-posframe-background-color`: theme-aware posframe background colors selected from the current frame's `background-mode`
+- `ratex-posframe-background-color`: explicit posframe background override; when nil, the dark/light defaults above are used
+- `ratex-theme-change-refresh-scope`: whether a theme change refreshes all `ratex-mode` buffers, only the current buffer, or none
 - `ratex-auto-download-backend`: whether to download automatically
 - `ratex-backend-binary`: backend binary path
 
@@ -197,10 +201,29 @@ When `ratex-edit-preview` is set, a live preview is shown while editing a formul
 (use-package ratex
   :config
   (setq ratex-backend-root "~/.emacs.d/straight/repos/ratex.el/")
-  (setq ratex-render-color "white")
+  (setq ratex-dark-render-color "white")
+  (setq ratex-light-render-color "black")
   (setq ratex-edit-preview 'minibuffer)
-  (setq ratex-posframe-background-color "black")
+  (setq ratex-dark-posframe-background-color "black")
+  (setq ratex-light-posframe-background-color "white")
   (ratex-setup))
+```
+
+If you want to force a single color regardless of the current theme, set the
+override variables directly:
+
+```elisp
+(setq ratex-render-color "white")
+(setq ratex-posframe-background-color "black")
+```
+
+To control what happens after switching themes:
+
+```elisp
+(setq ratex-theme-change-refresh-scope 'all)     ; default
+;; or:
+;; (setq ratex-theme-change-refresh-scope 'current)
+;; (setq ratex-theme-change-refresh-scope nil)
 ```
 
 If the backend cannot find KaTeX fonts (e.g. using a downloaded binary outside the
