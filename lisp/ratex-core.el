@@ -73,15 +73,42 @@ or `minibuffer' to show the preview in the minibuffer."
                  (const :tag "Minibuffer" minibuffer)))
 
 (defcustom ratex-render-color nil
-  "Default formula color sent to backend rendering.
+  "Override formula color sent to backend rendering.
 
-Use nil to keep backend defaults."
+When nil, RaTeX chooses `ratex-dark-render-color' or
+`ratex-light-render-color' based on the current frame's
+`background-mode'."
   :type '(choice (const :tag "Backend default" nil)
                  string))
 
-(defcustom ratex-posframe-background-color "white"
-  "Background color for RaTeX posframe preview."
-  :type 'string)
+(defcustom ratex-dark-render-color "white"
+  "Formula color used when the current frame uses a dark background."
+  :type '(choice (const :tag "Backend default" nil)
+                 string))
+
+(defcustom ratex-light-render-color "black"
+  "Formula color used when the current frame uses a light background."
+  :type '(choice (const :tag "Backend default" nil)
+                 string))
+
+(defcustom ratex-posframe-background-color nil
+  "Override background color for RaTeX posframe preview.
+
+When nil, RaTeX chooses `ratex-dark-posframe-background-color' or
+`ratex-light-posframe-background-color' based on the current frame's
+`background-mode'."
+  :type '(choice (const :tag "Theme aware default" nil)
+                 string))
+
+(defcustom ratex-dark-posframe-background-color "black"
+  "Posframe background color used when the current frame uses a dark background."
+  :type '(choice (const :tag "Theme default" nil)
+                 string))
+
+(defcustom ratex-light-posframe-background-color "white"
+  "Posframe background color used when the current frame uses a light background."
+  :type '(choice (const :tag "Theme default" nil)
+                 string))
 
 (defcustom ratex-posframe-border-color "gray70"
   "Border color for RaTeX posframe preview."
@@ -91,6 +118,16 @@ Use nil to keep backend defaults."
   'ratex-posframe-poshandler-point-bottom-left-corner-offset
   "Poshandler function used to place the RaTeX posframe preview."
   :type 'function)
+
+(defcustom ratex-theme-change-refresh-scope 'all
+  "How RaTeX refreshes previews after a theme change.
+
+When set to `all', refresh every live buffer with `ratex-mode' enabled.
+When set to `current', refresh only the buffer that was current when the
+theme change was triggered. When nil, do not refresh automatically."
+  :type '(choice (const :tag "Refresh all RaTeX buffers" all)
+                 (const :tag "Refresh current buffer only" current)
+                 (const :tag "Do not refresh automatically" nil)))
 
 (defvar ratex--process nil)
 (defvar ratex--process-buffer " *ratex-backend*")

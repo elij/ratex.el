@@ -143,6 +143,24 @@
      (equal (ratex--backend-binary-path)
             (expand-file-name ratex-backend-binary root)))))
 
+(ert-deftest ratex-auto-enable-p-detects-supported-modes ()
+  (with-temp-buffer
+    (setq major-mode 'org-mode)
+    (should (ratex--auto-enable-p)))
+  (with-temp-buffer
+    (setq major-mode 'text-mode)
+    (should-not (ratex--auto-enable-p))))
+
+(ert-deftest ratex-global-mode-enables-supported-buffer ()
+  (with-temp-buffer
+    (setq major-mode 'markdown-mode)
+    (let (enabled)
+      (cl-letf (((symbol-function 'ratex-mode)
+                 (lambda (&optional arg)
+                   (setq enabled arg))))
+        (ratex--maybe-enable)
+        (should (equal enabled 1))))))
+
 (ert-deftest ratex-json-response-uses-symbol-keys ()
   (let* ((json-object-type 'alist)
          (json-key-type 'symbol)
@@ -155,13 +173,98 @@
     (should (equal (alist-get 'height payload) 2.0))
     (should (equal (alist-get 'baseline payload) 1.0))))
 
-(ert-deftest ratex-normalized-render-color ()
-  (let ((ratex-render-color "  #ff00aa  "))
-    (should (equal (ratex--normalized-render-color) "#ff00aa")))
-  (let ((ratex-render-color "   "))
-    (should-not (ratex--normalized-render-color)))
-  (let ((ratex-render-color nil))
-    (should-not (ratex--normalized-render-color))))
+(ert-deftest ratex-normalize-color-value ()
+  (should (equal (ratex--normalize-color-value "  #ff00aa  ") "#ff00aa"))
+  (should-not (ratex--normalize-color-value "   "))
+  (should-not (ratex--normalize-color-value nil)))
+
+(ert-deftest ratex-effective-render-color-follows-background-mode ()
+  (let ((ratex-render-color nil)
+        (ratex-dark-render-color "white")
+        (ratex-light-render-color "black"))
+    (cl-letf (((symbol-function 'frame-parameter)
+               (lambda (&rest _args) 'dark)))
+      (should (equal (ratex--effective-render-color) "white")))
+    (cl-letf (((symbol-function 'frame-parameter)
+               (lambda (&rest _args) 'light)))
+      (should (equal (ratex--effective-render-color) "black")))))
+
+(ert-deftest ratex-effective-render-color-explicit-override-wins ()
+  (let ((ratex-render-color "  red  ")
+        (ratex-dark-render-color "white")
+        (ratex-light-render-color "black"))
+    (cl-letf (((symbol-function 'frame-parameter)
+               (lambda (&rest _args) 'dark)))
+      (should (equal (ratex--effective-render-color) "red")))))
+
+(ert-deftest ratex-effective-posframe-background-color-follows-background-mode ()
+  (let ((ratex-posframe-background-color nil)
+        (ratex-dark-posframe-background-color "black")
+        (ratex-light-posframe-background-color "white"))
+    (cl-letf (((symbol-function 'frame-parameter)
+               (lambda (&rest _args) 'dark)))
+      (should (equal (ratex--effective-posframe-background-color) "black")))
+    (cl-letf (((symbol-function 'frame-parameter)
+               (lambda (&rest _args) 'light)))
+      (should (equal (ratex--effective-posframe-background-color) "white")))))
+
+(ert-deftest ratex-effective-posframe-background-color-explicit-override-wins ()
+  (let ((ratex-posframe-background-color "  gray10  ")
+        (ratex-dark-posframe-background-color "black")
+        (ratex-light-posframe-background-color "white"))
+    (cl-letf (((symbol-function 'frame-parameter)
+               (lambda (&rest _args) 'light)))
+      (should (equal (ratex--effective-posframe-background-color) "gray10")))))
+
+(ert-deftest ratex-theme-refresh-all-buffers ()
+  (let ((buf-a (generate-new-buffer " *ratex-theme-a*"))
+        (buf-b (generate-new-buffer " *ratex-theme-b*"))
+        (buf-c (generate-new-buffer " *ratex-theme-c*"))
+        refreshed)
+    (unwind-protect
+        (progn
+          (with-current-buffer buf-a
+            (setq-local ratex-mode t))
+          (with-current-buffer buf-b
+            (setq-local ratex-mode t))
+          (cl-letf (((symbol-function 'ratex-refresh-previews)
+                     (lambda (&optional include-active)
+                       (push (list (current-buffer) include-active) refreshed))))
+            (ratex--run-theme-refresh buf-a 'all)
+            (should (= (length refreshed) 2))
+            (should (member (list buf-a t) refreshed))
+            (should (member (list buf-b t) refreshed))
+            (should-not (member (list buf-c t) refreshed))))
+      (kill-buffer buf-a)
+      (kill-buffer buf-b)
+      (kill-buffer buf-c))))
+
+(ert-deftest ratex-theme-refresh-current-buffer-only ()
+  (let ((buf-a (generate-new-buffer " *ratex-theme-current-a*"))
+        (buf-b (generate-new-buffer " *ratex-theme-current-b*"))
+        refreshed)
+    (unwind-protect
+        (progn
+          (with-current-buffer buf-a
+            (setq-local ratex-mode t))
+          (with-current-buffer buf-b
+            (setq-local ratex-mode t))
+          (cl-letf (((symbol-function 'ratex-refresh-previews)
+                     (lambda (&optional include-active)
+                       (push (list (current-buffer) include-active) refreshed))))
+            (ratex--run-theme-refresh buf-b 'current)
+            (should (equal refreshed (list (list buf-b t))))))
+      (kill-buffer buf-a)
+      (kill-buffer buf-b))))
+
+(ert-deftest ratex-theme-refresh-schedule-respects-disabled-setting ()
+  (let ((ratex-theme-change-refresh-scope nil)
+        scheduled)
+    (cl-letf (((symbol-function 'run-with-idle-timer)
+               (lambda (&rest _args)
+                 (setq scheduled t))))
+      (ratex--schedule-theme-refresh)
+      (should-not scheduled))))
 
 (ert-deftest ratex-fragments-in-buffer-detects-multiple ()
   (with-temp-buffer
@@ -261,6 +364,21 @@
            (ratex-render-color "#ffffff")
            (key-b (ratex--cache-key fragment)))
       (should-not (equal key-a key-b)))))
+
+(ert-deftest ratex-cache-key-includes-theme-aware-render-color ()
+  (with-temp-buffer
+    (insert "\\(x\\)")
+    (let* ((fragment (car (ratex-fragments-in-buffer)))
+           (ratex-render-color nil)
+           (ratex-dark-render-color "#ffffff")
+           (ratex-light-render-color "#000000"))
+      (cl-letf (((symbol-function 'frame-parameter)
+                 (lambda (&rest _args) 'dark)))
+        (let ((key-a (ratex--cache-key fragment)))
+          (cl-letf (((symbol-function 'frame-parameter)
+                     (lambda (&rest _args) 'light)))
+            (let ((key-b (ratex--cache-key fragment)))
+              (should-not (equal key-a key-b)))))))))
 
 (ert-deftest ratex-cache-key-includes-font-dir ()
   (with-temp-buffer
