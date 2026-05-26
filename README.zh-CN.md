@@ -62,7 +62,7 @@ git submodule update --init --recursive
 ```elisp
 (use-package ratex
   :config
-  (ratex-setup))
+  (global-ratex-mode 1))
 ```
 
 当前 buffer 手动启用：
@@ -75,7 +75,7 @@ M-x ratex-mode
 
 ```elisp
 (require 'ratex)
-(ratex-setup)
+(global-ratex-mode 1)
 ```
 
 如果你想自己写 hook，也可以这样：
@@ -201,7 +201,7 @@ M-x ratex-download-backend
   (setq ratex-edit-preview 'minibuffer)
   (setq ratex-dark-posframe-background-color "black")
   (setq ratex-light-posframe-background-color "white")
-  (ratex-setup))
+  (global-ratex-mode 1))
 ```
 
 如果你想无视当前主题、强制使用单一颜色，可以直接设置覆盖变量：

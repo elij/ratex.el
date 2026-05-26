@@ -63,7 +63,7 @@ Or with `use-package` (recommended for straight.el users):
 ```elisp
 (use-package ratex
   :config
-  (ratex-setup))
+  (global-ratex-mode 1))
 ```
 
 Enable it manually in the current buffer:
@@ -76,7 +76,7 @@ Or enable it automatically for common text/math modes:
 
 ```elisp
 (require 'ratex)
-(ratex-setup)
+(global-ratex-mode 1)
 ```
 
 Equivalent explicit hook setup:
@@ -206,7 +206,7 @@ When `ratex-edit-preview` is set, a live preview is shown while editing a formul
   (setq ratex-edit-preview 'minibuffer)
   (setq ratex-dark-posframe-background-color "black")
   (setq ratex-light-posframe-background-color "white")
-  (ratex-setup))
+  (global-ratex-mode 1))
 ```
 
 If you want to force a single color regardless of the current theme, set the

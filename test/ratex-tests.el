@@ -143,6 +143,24 @@
      (equal (ratex--backend-binary-path)
             (expand-file-name ratex-backend-binary root)))))
 
+(ert-deftest ratex-auto-enable-p-detects-supported-modes ()
+  (with-temp-buffer
+    (setq major-mode 'org-mode)
+    (should (ratex--auto-enable-p)))
+  (with-temp-buffer
+    (setq major-mode 'text-mode)
+    (should-not (ratex--auto-enable-p))))
+
+(ert-deftest ratex-global-mode-enables-supported-buffer ()
+  (with-temp-buffer
+    (setq major-mode 'markdown-mode)
+    (let (enabled)
+      (cl-letf (((symbol-function 'ratex-mode)
+                 (lambda (&optional arg)
+                   (setq enabled arg))))
+        (ratex--maybe-enable)
+        (should (equal enabled 1))))))
+
 (ert-deftest ratex-json-response-uses-symbol-keys ()
   (let* ((json-object-type 'alist)
          (json-key-type 'symbol)
