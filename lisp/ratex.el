@@ -10,6 +10,7 @@
 ;; Minimal async inline math preview minor mode backed by RaTeX.
 
 ;;; Code:
+(require 'subr-x)
 (require 'ratex-core)
 (require 'ratex-overlays)
 (require 'ratex-render)
@@ -31,14 +32,49 @@
     (ratex-clear-overlays)
     (ratex-reset-buffer-state)))
 
+(defun ratex--org-keyword-state ()
+  "Return the requested RaTeX state from an Org `#+ratex:' keyword.
+
+Return `enable' for values such as an empty string, `t', or `on';
+return `disable' for values such as `nil' or `off'; otherwise return nil."
+  (when (derived-mode-p 'org-mode)
+    (save-excursion
+      (goto-char (point-min))
+      (let ((case-fold-search t)
+            (state nil))
+        (while (and (not state)
+                    (re-search-forward "^[ \t]*#\\+ratex:[ \t]*\\(.*\\)$" nil t))
+          (let ((value (downcase (string-trim (match-string-no-properties 1)))))
+            (setq state
+                  (cond
+                   ((member value '("" "t" "true" "yes" "on" "enable" "enabled"))
+                    'enable)
+                   ((member value '("nil" "false" "no" "off" "disable" "disabled"))
+                    'disable)))))
+        state))))
+
 (defun ratex--auto-enable-p ()
   "Return non-nil when `ratex-mode' should auto-enable in this buffer."
-  (derived-mode-p 'latex-mode 'LaTeX-mode 'org-mode 'markdown-mode))
+  (cond
+   ((derived-mode-p 'org-mode)
+    (not (eq (ratex--org-keyword-state) 'disable)))
+   (t
+    (derived-mode-p 'latex-mode 'LaTeX-mode 'markdown-mode))))
 
 (defun ratex--maybe-enable ()
   "Enable `ratex-mode' when the current buffer supports RaTeX previews."
   (when (ratex--auto-enable-p)
     (ratex-mode 1)))
+
+(defun ratex--apply-org-keyword ()
+  "Apply the current Org buffer's `#+ratex:' preference."
+  (pcase (ratex--org-keyword-state)
+    ('enable
+     (unless ratex-mode
+       (ratex-mode 1)))
+    ('disable
+     (when ratex-mode
+       (ratex-mode -1)))))
 
 (define-globalized-minor-mode global-ratex-mode
   ratex-mode
@@ -87,6 +123,8 @@ Escaped delimiters (\\$) are left unchanged."
           (delete-region beg (+ beg 1))
           (goto-char beg)
           (insert "\\("))))))
+
+(add-hook 'hack-local-variables-hook #'ratex--apply-org-keyword)
 
 (provide 'ratex)
 

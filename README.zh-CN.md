@@ -78,6 +78,15 @@ M-x ratex-mode
 (global-ratex-mode 1)
 ```
 
+在 Org 文件里，也可以通过关键字做单文件控制：
+
+```org
+#+ratex: t
+```
+
+如果想对某个 Org 文件关闭它，可以写 `#+ratex: nil` 或 `#+ratex: off`。
+即使启用了 `global-ratex-mode`，这个文件级设置也会生效。
+
 如果你想自己写 hook，也可以这样：
 
 ```elisp
