@@ -4,7 +4,6 @@
 
 (require 'cl-lib)
 (require 'subr-x)
-(require 'ratex-core)
 (require 'ratex-math-detect)
 (require 'ratex-overlays)
 ;; posframe is optional; load it dynamically when enabled.
@@ -40,6 +39,24 @@
 (defconst ratex--posframe-buffer " *ratex-preview*")
 (defconst ratex--posframe-offset-y 5)
 (defconst ratex--refresh-batch-size 50)
+
+(defun ratex-render-math-async (math-string callback)
+  "Render MATH-STRING via ratex_svg and pass the result to CALLBACK."
+  (let* ((buf-name (format " *ratex-svg-%s*" (md5 math-string)))
+         (output-buf (generate-new-buffer buf-name))
+         (proc (make-process
+                :name "ratex-render"
+                :buffer output-buf
+                :command '("ratex_svg" "render-svg" "--stdout")
+                :connection-type 'pipe
+                :sentinel (lambda (process event)
+                            (when (string-match-p "finished" event)
+                              (let ((svg-data (with-current-buffer (process-buffer process)
+                                                (buffer-string))))
+                                (funcall callback svg-data))
+                              (kill-buffer (process-buffer process)))))))
+    (process-send-string proc math-string)
+    (process-send-eof proc)))
 
 (defun ratex-reset-buffer-state ()
   "Reset buffer-local rendering state."
@@ -238,11 +255,15 @@ currently under point."
   "Build an image object from backend RESPONSE."
   (let* ((svg (alist-get 'svg response))
          (baseline (or (alist-get 'baseline response) 0.0))
-         (height (max 0.001 (or (alist-get 'height response) 0.0))))
+         (height (max 0.001 (or (alist-get 'height response) 0.0)))
+         (current-scale (if (bound-and-true-p text-scale-mode)
+                            (expt text-scale-mode-step text-scale-mode-amount)
+                          1.0)))
     (when svg
       (create-image
        svg
        'svg t
+       :scale current-scale
        :ascent (floor (* 100.0 (/ baseline height)))))))
 
 (defun ratex--preview-image-from-response (response)
@@ -445,20 +466,20 @@ currently under point."
      (t
       (ratex--enqueue-waiter cache-key fragment-key fragment)
       (puthash cache-key t (ratex--inflight-table))
-      (ratex-request
-       (ratex--render-payload fragment)
-       (lambda (response)
-         (remhash cache-key (ratex--inflight-table))
-         (let ((waiters (gethash cache-key (ratex--inflight-waiters-table))))
-           (remhash cache-key (ratex--inflight-waiters-table))
-           (when (ratex--response-ok-p response)
-             (puthash cache-key response ratex--render-cache))
-           (when ratex-mode
-             (dolist (entry waiters)
-               (ratex--display-if-visible
-                (car entry)
-                (cdr entry)
-                response))))))))))
+      (ratex-render-math-async
+       (plist-get fragment :content)
+       (lambda (svg-data)
+         (let ((response `((ok . t) (svg . ,svg-data))))
+           (remhash cache-key (ratex--inflight-table))
+           (let ((waiters (gethash cache-key (ratex--inflight-waiters-table))))
+             (remhash cache-key (ratex--inflight-waiters-table))
+             (puthash cache-key response ratex--render-cache)
+             (when ratex-mode
+               (dolist (entry waiters)
+                 (ratex--display-if-visible
+                  (car entry)
+                  (cdr entry)
+                  response)))))))))))
 
 (defun ratex--display-if-visible (fragment-key fragment response)
   "Display RESPONSE for FRAGMENT-KEY if FRAGMENT should still be visible."

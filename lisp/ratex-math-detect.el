@@ -4,9 +4,12 @@
 
 (require 'cl-lib)
 
-(defconst ratex--delimiter-pairs
-  '(("\\[" . "\\]")
-    ("\\(" . "\\)")))
+(defvar ratex--delimiter-pairs
+  '(("$$" . "$$")
+    ("$" . "$")
+    ("\\(" . "\\)")
+    ("\\[" . "\\]"))
+  "Alist of LaTeX math delimiter pairs.")
 
 (defun ratex-fragments-in-buffer (&optional beg end)
   "Return all math fragments between BEG and END.
