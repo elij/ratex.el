@@ -5,18 +5,8 @@
 (require 'ert)
 (require 'json)
 (require 'ratex)
-(require 'ratex-core)
 (require 'ratex-render)
 (require 'ratex-math-detect)
-
-(ert-deftest ratex-download-backend-delegates-to-async ()
-  (let (called
-        (ratex--download-in-progress nil))
-    (cl-letf (((symbol-function 'ratex--download-backend-async)
-               (lambda ()
-                 (setq called t))))
-      (ratex-download-backend)
-      (should called))))
 
 (ert-deftest ratex-detects-dollar-math ()
   (with-temp-buffer
@@ -108,40 +98,6 @@
     (search-forward "x")
     (should-not (ratex-fragment-at-point))
     (should-not (ratex-fragments-in-buffer))))
-
-(ert-deftest ratex-project-root-follows-library-location ()
-  (let ((default-directory "/tmp/"))
-    (let ((root (directory-file-name (ratex-root))))
-      (should (file-directory-p root))
-      (should (file-exists-p (expand-file-name "backend/Cargo.toml" root)))
-      (should (file-directory-p (expand-file-name "lisp" root))))))
-
-(ert-deftest ratex-backend-root-override-wins ()
-  (let ((ratex-backend-root "/tmp/ratex-root/"))
-    (should (equal (ratex-root)
-                   (file-name-as-directory
-                    (expand-file-name "/tmp/ratex-root/"))))))
-
-(ert-deftest ratex-backend-download-url-uses-latest-release ()
-  (let ((ratex-backend-release-repo "example/ratex.el")
-        (system-type 'gnu/linux))
-    (should
-     (equal (ratex--backend-download-url)
-            "https://github.com/example/ratex.el/releases/latest/download/ratex-editor-backend-linux")))
-  (let ((ratex-backend-release-repo "example/ratex.el")
-        (system-type 'windows-nt))
-    (should
-     (equal (ratex--backend-download-url)
-            "https://github.com/example/ratex.el/releases/latest/download/ratex-editor-backend-windows.exe"))))
-
-(ert-deftest ratex-backend-binary-path-defaults-to-project-target-directory ()
-  (let* ((root (make-temp-file "ratex-root" t))
-         (ratex-backend-root root)
-         (ratex-backend-binary (concat "backend/target/release/ratex-editor-backend"
-                                       (if (eq system-type 'windows-nt) ".exe" ""))))
-    (should
-     (equal (ratex--backend-binary-path)
-            (expand-file-name ratex-backend-binary root)))))
 
 (ert-deftest ratex-auto-enable-p-detects-supported-modes ()
   (with-temp-buffer
@@ -433,20 +389,6 @@
            (key-b (ratex--cache-key fragment)))
       (should-not (equal key-a key-b)))))
 
-(ert-deftest ratex-render-request-includes-color ()
-  (with-temp-buffer
-    (insert "\\(x\\)")
-    (let* ((fragment (car (ratex-fragments-in-buffer)))
-           (ratex-render-color "  red  ")
-           payload)
-      (ratex-reset-buffer-state)
-      (cl-letf (((symbol-function 'ratex-request)
-                 (lambda (data _callback)
-                   (setq payload data)
-                   1)))
-        (ratex--ensure-fragment-preview fragment)
-        (should (equal (alist-get 'color payload) "red"))))))
-
 (ert-deftest ratex-error-response-renders-error-overlay ()
   (with-temp-buffer
     (insert "\\(\\bad{\\)")
@@ -526,24 +468,6 @@
         (ratex-handle-post-command)
         (should-not removed)
         (should-not ensured)))))
-
-(ert-deftest ratex-dispatches-responses-in-origin-buffer ()
-  (let ((origin (generate-new-buffer " *ratex-origin*"))
-        (process-buffer (generate-new-buffer " *ratex-process*")))
-    (unwind-protect
-        (with-current-buffer origin
-          (clrhash ratex--pending)
-          (let ((seen-buffer nil))
-            (ratex-request
-             '((type . "ping"))
-             (lambda (_response)
-               (setq seen-buffer (current-buffer))))
-            (with-current-buffer process-buffer
-              (ratex--dispatch-line "{\"id\":1,\"ok\":true}"))
-            (should (eq seen-buffer origin))))
-      (kill-buffer origin)
-      (kill-buffer process-buffer)
-      (clrhash ratex--pending))))
 
 (ert-deftest ratex-rendered-overlay-at-point-p-detects-range ()
   (with-temp-buffer
@@ -728,18 +652,17 @@
            seen)
       (setq-local ratex-mode t)
       (ratex-reset-buffer-state)
-      (cl-letf (((symbol-function 'ratex-request)
-                 (lambda (_data cb)
+      (cl-letf (((symbol-function 'ratex-render-math-async)
+                 (lambda (_math-string cb)
                    (setq request-count (1+ request-count))
-                   (setq callback cb)
-                   1))
+                   (setq callback cb)))
                 ((symbol-function 'ratex--display-if-visible)
                  (lambda (fragment-key _fragment _response)
                    (push fragment-key seen))))
         (ratex--ensure-fragment-preview first)
         (ratex--ensure-fragment-preview second)
         (should (= request-count 1))
-        (funcall callback '((ok . t) (svg . "<svg/>") (baseline . 1.0) (height . 1.0)))
+        (funcall callback "<svg/>")
         (should (equal (sort seen #'string<)
                        (sort (list first-key second-key) #'string<)))))))
 

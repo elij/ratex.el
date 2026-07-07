@@ -62,6 +62,8 @@ Or with `use-package` (recommended for straight.el users):
 
 ```elisp
 (use-package ratex
+    :vc (:url "https://github.com/gongshangzheng/ratex.el" 
+            :lisp-dir "lisp")
   :config
   (global-ratex-mode 1))
 ```

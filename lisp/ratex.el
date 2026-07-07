@@ -11,7 +11,6 @@
 
 ;;; Code:
 (require 'subr-x)
-(require 'ratex-core)
 (require 'ratex-overlays)
 (require 'ratex-render)
 
@@ -24,7 +23,6 @@
         (ratex-reset-buffer-state)
         (add-hook 'post-command-hook #'ratex-handle-post-command nil t)
         (add-hook 'buffer-list-update-hook #'ratex-handle-buffer-switch)
-        (ratex-start-backend)
         (ratex-initialize-previews))
     (remove-hook 'post-command-hook #'ratex-handle-post-command t)
     (remove-hook 'buffer-list-update-hook #'ratex-handle-buffer-switch)

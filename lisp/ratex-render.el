@@ -4,23 +4,72 @@
 
 (require 'cl-lib)
 (require 'subr-x)
-(require 'ratex-core)
 (require 'ratex-math-detect)
 (require 'ratex-overlays)
 ;; posframe is optional; load it dynamically when enabled.
 
 (defvar ratex-mode)
-(defvar ratex-render-color)
-(defvar ratex-dark-render-color)
-(defvar ratex-light-render-color)
-(defvar ratex-edit-preview)
-(defvar ratex-font-dir)
-(defvar ratex-posframe-background-color)
-(defvar ratex-dark-posframe-background-color)
-(defvar ratex-light-posframe-background-color)
-(defvar ratex-posframe-border-color)
-(defvar ratex-posframe-poshandler)
-(defvar ratex-theme-change-refresh-scope)
+
+(defgroup ratex nil
+  "Inline maths rendering with RaTeX."
+  :group 'tex)
+
+(defcustom ratex-font-size 16.0
+  "Default backend SVG font size."
+  :type 'number)
+
+(defcustom ratex-svg-padding 2.0
+  "Default SVG padding sent to the backend."
+  :type 'number)
+
+(defcustom ratex-font-dir nil
+  "Directory containing KaTeX .ttf font files."
+  :type '(choice (const :tag "Auto detect" nil) directory))
+
+(defcustom ratex-edit-preview nil
+  "Preview style used while editing formulae."
+  :type '(choice (const :tag "Disable" nil)
+                 (const :tag "Posframe" posframe)
+                 (const :tag "Minibuffer" minibuffer)))
+
+(defcustom ratex-render-color nil
+  "Override formula colour sent to backend rendering."
+  :type '(choice (const :tag "Backend default" nil) string))
+
+(defcustom ratex-dark-render-color "white"
+  "Formula colour used when the current frame uses a dark background."
+  :type '(choice (const :tag "Backend default" nil) string))
+
+(defcustom ratex-light-render-color "black"
+  "Formula colour used when the current frame uses a light background."
+  :type '(choice (const :tag "Backend default" nil) string))
+
+(defcustom ratex-posframe-background-color nil
+  "Override background colour for RaTeX posframe preview."
+  :type '(choice (const :tag "Theme aware default" nil) string))
+
+(defcustom ratex-dark-posframe-background-color "black"
+  "Posframe background colour used when the current frame uses a dark background."
+  :type '(choice (const :tag "Theme default" nil) string))
+
+(defcustom ratex-light-posframe-background-color "white"
+  "Posframe background colour used when the current frame uses a light background."
+  :type '(choice (const :tag "Theme default" nil) string))
+
+(defcustom ratex-posframe-border-color "gray70"
+  "Border colour for RaTeX posframe preview."
+  :type 'string)
+
+(defcustom ratex-posframe-poshandler
+  'ratex-posframe-poshandler-point-bottom-left-corner-offset
+  "Poshandler function used to place the RaTeX posframe preview."
+  :type 'function)
+
+(defcustom ratex-theme-change-refresh-scope 'all
+  "How RaTeX refreshes previews after a theme change."
+  :type '(choice (const :tag "Refresh all RaTeX buffers" all)
+                 (const :tag "Refresh current buffer only" current)
+                 (const :tag "Do not refresh automatically" nil)))
 (defvar-local ratex--render-cache nil)
 (defvar-local ratex--inflight-requests nil)
 (defvar-local ratex--inflight-waiters nil)
@@ -40,6 +89,39 @@
 (defconst ratex--posframe-buffer " *ratex-preview*")
 (defconst ratex--posframe-offset-y 5)
 (defconst ratex--refresh-batch-size 50)
+
+(defcustom ratex-executable-path "render-svg"
+  "The path to the render-svg executable.
+Set this to an absolute path if the binary is not in your exec-path."
+  :type 'string)
+
+(defun ratex-render-math-async (math-string callback)
+  "Render MATH-STRING via render-svg and pass the result to CALLBACK."
+  (let* ((buf-name (format " *ratex-svg-%s*" (md5 math-string)))
+         (output-buf (generate-new-buffer buf-name))
+         (color (ratex--effective-render-color))
+         (cmd `(,ratex-executable-path "--stdout"
+                                       "--font-size" ,(number-to-string ratex-font-size)
+                                       ,@(when color (list "--color" color))))
+         (single-line-math (replace-regexp-in-string "[\r\n]+" " " math-string))
+         (proc (make-process
+                :name "ratex-render"
+                :buffer output-buf
+                :command cmd
+                :connection-type 'pipe
+                :sentinel (lambda (process event)
+                            (when (string-match-p "finished" event)
+                              (let* ((raw-output (with-current-buffer (process-buffer process)
+                                                   (buffer-string)))
+                                     (svg-data raw-output)
+                                     (start (string-match "<svg" raw-output))
+                                     (end (string-match "</svg>" raw-output start)))
+                                (when (and start end)
+                                  (setq svg-data (substring raw-output start (+ end 6))))
+                                (funcall callback svg-data))
+                              (kill-buffer (process-buffer process)))))))
+    (process-send-string proc (concat single-line-math "\n"))
+    (process-send-eof proc)))
 
 (defun ratex-reset-buffer-state ()
   "Reset buffer-local rendering state."
@@ -237,13 +319,20 @@ currently under point."
 (defun ratex--image-from-response (response)
   "Build an image object from backend RESPONSE."
   (let* ((svg (alist-get 'svg response))
-         (baseline (or (alist-get 'baseline response) 0.0))
-         (height (max 0.001 (or (alist-get 'height response) 0.0))))
+         (baseline (alist-get 'baseline response))
+         (height (alist-get 'height response))
+         (current-scale (if (bound-and-true-p text-scale-mode)
+                            (expt text-scale-mode-step text-scale-mode-amount)
+                          1.0))
+         (ascent-val (if (and baseline height (> height 0))
+                         (floor (* 100.0 (/ baseline height)))
+                       'center)))
     (when svg
       (create-image
        svg
        'svg t
-       :ascent (floor (* 100.0 (/ baseline height)))))))
+       :scale current-scale
+       :ascent ascent-val))))
 
 (defun ratex--preview-image-from-response (response)
   "Build a preview image from backend RESPONSE, including errors."
@@ -445,20 +534,20 @@ currently under point."
      (t
       (ratex--enqueue-waiter cache-key fragment-key fragment)
       (puthash cache-key t (ratex--inflight-table))
-      (ratex-request
-       (ratex--render-payload fragment)
-       (lambda (response)
-         (remhash cache-key (ratex--inflight-table))
-         (let ((waiters (gethash cache-key (ratex--inflight-waiters-table))))
-           (remhash cache-key (ratex--inflight-waiters-table))
-           (when (ratex--response-ok-p response)
-             (puthash cache-key response ratex--render-cache))
-           (when ratex-mode
-             (dolist (entry waiters)
-               (ratex--display-if-visible
-                (car entry)
-                (cdr entry)
-                response))))))))))
+      (ratex-render-math-async
+       (plist-get fragment :content)
+       (lambda (svg-data)
+         (let ((response `((ok . t) (svg . ,svg-data))))
+           (remhash cache-key (ratex--inflight-table))
+           (let ((waiters (gethash cache-key (ratex--inflight-waiters-table))))
+             (remhash cache-key (ratex--inflight-waiters-table))
+             (puthash cache-key response ratex--render-cache)
+             (when ratex-mode
+               (dolist (entry waiters)
+                 (ratex--display-if-visible
+                  (car entry)
+                  (cdr entry)
+                  response)))))))))))
 
 (defun ratex--display-if-visible (fragment-key fragment response)
   "Display RESPONSE for FRAGMENT-KEY if FRAGMENT should still be visible."
