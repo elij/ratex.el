@@ -97,7 +97,8 @@ Set this to an absolute path if the binary is not in your exec-path."
 
 (defun ratex-render-math-async (math-string callback)
   "Render MATH-STRING via render-svg and pass the result to CALLBACK."
-  (let* ((buf-name (format " *ratex-svg-%s*" (md5 math-string)))
+  (let* ((origin-buffer (current-buffer))
+         (buf-name (format " *ratex-svg-%s*" (md5 math-string)))
          (output-buf (generate-new-buffer buf-name))
          (color (ratex--effective-render-color))
          (cmd `(,ratex-executable-path "--stdout"
@@ -118,7 +119,10 @@ Set this to an absolute path if the binary is not in your exec-path."
                                      (end (string-match "</svg>" raw-output start)))
                                 (when (and start end)
                                   (setq svg-data (substring raw-output start (+ end 6))))
-                                (funcall callback svg-data))
+                                
+                                (when (buffer-live-p origin-buffer)
+                                  (with-current-buffer origin-buffer
+                                    (funcall callback svg-data))))
                               (kill-buffer (process-buffer process)))))))
     (process-send-string proc (concat single-line-math "\n"))
     (process-send-eof proc)))
@@ -147,6 +151,9 @@ When INCLUDE-ACTIVE is non-nil, render all formulas, including the one
 currently under point."
   (interactive)
   (ratex--cancel-refresh-timer)
+  (when (hash-table-p ratex--render-cache)
+    (clrhash ratex--render-cache))
+  (ratex-clear-overlays)
   (cl-incf ratex--refresh-generation)
   (let* ((fragments (ratex--visible-fragments))
          (active (ratex-fragment-at-point))

@@ -1,3 +1,0 @@
-[submodule "vendor/ratex-core"]
-	path = vendor/ratex-core
-	url = https://github.com/erweixin/RaTeX
