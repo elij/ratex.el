@@ -748,6 +748,14 @@ currently under point."
         (when ratex-mode
           (ratex--hide-edit-preview))))))
 
+(defun ratex--fragments-overlap-p (a b)
+  "Return non-nil if fragment A overlaps fragment B."
+  (let ((ab (plist-get a :begin))
+        (ae (plist-get a :end))
+        (bb (plist-get b :begin))
+        (be (plist-get b :end)))
+    (and (< ab be) (< bb ae))))
+
 (advice-add 'load-theme :after #'ratex--schedule-theme-refresh)
 (advice-add 'enable-theme :after #'ratex--schedule-theme-refresh)
 (advice-add 'disable-theme :after #'ratex--schedule-theme-refresh)

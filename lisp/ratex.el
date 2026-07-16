@@ -1,7 +1,7 @@
 ;;; ratex.el --- Inline LaTeX previews via RaTeX -*- lexical-binding: t; -*-
 
 ;; Author: ratex.el contributors
-;; Version: 0.1.0
+;; Version: 0.1.1
 ;; Package-Requires: ((emacs "29.1"))
 ;; Keywords: tex, math, tools
 
@@ -79,8 +79,6 @@ return `disable' for values such as `nil' or `off'; otherwise return nil."
   ratex--maybe-enable
   :group 'ratex)
 
-
-;;;###autoload
 ;;;###autoload
 (defun ratex-toggle-preview-command ()
   "Toggle RaTeX preview at point."
@@ -93,34 +91,33 @@ return `disable' for values such as `nil' or `off'; otherwise return nil."
 $$...$$ becomes \\[...\\] and $...$ becomes \\(...\\).
 Escaped delimiters (\\$) are left unchanged."
   (interactive)
-  (require 'ratex-math-detect)
   (save-excursion
-    ;; First pass: $$...$$ → \[...\]
-    (let ((fragments (ratex--fragments-with-delimiters "$$" "$$")))
-      (dolist (f (sort fragments (lambda (a b) (> (plist-get a :begin) (plist-get b :begin)))))
-        (let ((beg (plist-get f :begin))
-              (end (plist-get f :end)))
-          ;; Replace closing $$ with \]
-          (delete-region (- end 2) end)
-          (goto-char (- end 2))
-          (insert "\\]")
-          ;; Replace opening $$ with \[
-          (delete-region beg (+ beg 2))
-          (goto-char beg)
-          (insert "\\["))))
-    ;; Second pass: $...$ → \(...\)
-    (let ((fragments (ratex--fragments-with-delimiters "$" "$")))
-      (dolist (f (sort fragments (lambda (a b) (> (plist-get a :begin) (plist-get b :begin)))))
-        (let ((beg (plist-get f :begin))
-              (end (plist-get f :end)))
-          ;; Replace closing $ with \)
-          (delete-region (- end 1) end)
-          (goto-char (- end 1))
-          (insert "\\)")
-          ;; Replace opening $ with \(
-          (delete-region beg (+ beg 1))
-          (goto-char beg)
-          (insert "\\("))))))
+    (goto-char (point-min))
+    (let ((in-display-math nil)
+          (in-inline-math nil))
+      (while (re-search-forward "\\$\\$?" nil t)
+        (let ((matched (match-string 0))
+              (beg (match-beginning 0))
+              (end (match-end 0))
+              (syntax (syntax-ppss)))
+          ;; Ensure we are not inside a comment or a verbatim block
+          (unless (or (nth 4 syntax) (eq (nth 7 syntax) 2))
+            (cond
+             ;; Case 1: Double dollars $$
+             ((string= matched "$$")
+              (delete-region beg end)
+              (if in-display-math
+                  (insert "\\]")
+                (insert "\\["))
+              (setq in-display-math (not in-display-math)))
+             
+             ;; Case 2: Single dollar $ (only if not inside a $$ block)
+             ((not in-display-math)
+              (delete-region beg end)
+              (if in-inline-math
+                  (insert "\\)")
+                (insert "\\("))
+              (setq in-inline-math (not in-inline-math))))))))))
 
 (add-hook 'hack-local-variables-hook #'ratex--apply-org-keyword)
 
