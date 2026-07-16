@@ -1,5 +1,8 @@
 # ratex.el
 
+> [!NOTE]  
+This is a fork of [ratex.el](https://github.com/gongshangzheng/ratex.el) with changes that can no longer be merged upstream. Doesn't have the ratex RPC and uses tex-mode.el for parsing.
+
 [简体中文](./README.zh-CN.md)
 
 `ratex.el` is an Emacs-focused inline math preview package built on top of the
