@@ -181,9 +181,9 @@ currently under point."
       (unless (and previous current
                    (ratex--same-active-context-p previous current))
         (when previous
-          (ratex--ensure-fragment-preview previous)))
-      (when current
-        (ratex-remove-overlay (ratex--fragment-key current)))
+          (ratex--ensure-fragment-preview previous))
+        (when current
+          (ratex-remove-overlay (ratex--fragment-key current))))
       (when (ratex--preview-enabled-p)
         (ratex--handle-preview-at-point current))
       (setq ratex--active-fragment current))))

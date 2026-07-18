@@ -1,7 +1,7 @@
 # ratex.el
 
 > [!NOTE]  
-This is a fork of [ratex.el](https://github.com/gongshangzheng/ratex.el) with changes that can no longer be merged upstream. Doesn't have the ratex RPC and uses tex-mode.el for parsing.
+This is a fork of [ratex.el](https://github.com/gongshangzheng/ratex.el) with changes that can no longer be merged upstream. Doesn't have the ratex RPC and uses tex-mode.el for parsing. While it is compatible with GPL 3, this hasn't been defined by the original author.
 
 [简体中文](./README.zh-CN.md)
 
