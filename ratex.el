@@ -1,7 +1,7 @@
 ;;; ratex.el --- Inline LaTeX previews via RaTeX -*- lexical-binding: t; -*-
 
 ;; Author: ratex.el contributors
-;; Version: 0.1.4
+;; Version: 0.1.5
 ;; Package-Requires: ((emacs "29.1"))
 ;; Keywords: tex, math, tools
 
@@ -22,13 +22,11 @@
       (progn
         (ratex-reset-buffer-state)
         (add-hook 'post-command-hook #'ratex-handle-post-command nil t)
-        (add-hook 'buffer-list-update-hook #'ratex-handle-buffer-switch)
         (ratex-initialize-previews))
     (remove-hook 'post-command-hook #'ratex-handle-post-command t)
-    (remove-hook 'buffer-list-update-hook #'ratex-handle-buffer-switch)
-    (ratex-handle-buffer-switch)
     (ratex-clear-overlays)
     (ratex-reset-buffer-state)))
+
 
 (defun ratex--org-keyword-state ()
   "Return the requested RaTeX state from an Org `#+ratex:' keyword.
@@ -78,12 +76,6 @@ return `disable' for values such as `nil' or `off'; otherwise return nil."
   ratex-mode
   ratex--maybe-enable
   :group 'ratex)
-
-;;;###autoload
-(defun ratex-toggle-preview-command ()
-  "Toggle RaTeX preview at point."
-  (interactive)
-  (ratex-toggle-preview-at-point))
 
 ;;;###autoload
 (defun ratex-convert-delimiters ()

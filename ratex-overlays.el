@@ -27,8 +27,8 @@
       (delete-overlay overlay))
     (remhash key table)))
 
-(defun ratex-show-overlay (key beg end image &optional help-echo fragment style)
-  "Show IMAGE for KEY at BEG..END with optional HELP-ECHO, FRAGMENT, and STYLE."
+(defun ratex-show-overlay (key beg end image &optional help-echo fragment)
+  "Show IMAGE for KEY at BEG..END with optional HELP-ECHO and FRAGMENT."
   (let ((table (ratex--overlay-table))
         (overlay nil))
     (ratex-remove-overlay key)
@@ -37,7 +37,7 @@
     (overlay-put overlay 'evaporate t)
     (overlay-put overlay 'ratex-key key)
     (overlay-put overlay 'ratex-fragment fragment)
-    (ratex--overlay-apply-style overlay (or style 'inline))
+    (ratex--overlay-apply-style overlay)
     (puthash key overlay table))
   (when help-echo
     (overlay-put (gethash key (ratex--overlay-table)) 'help-echo help-echo)))
@@ -84,24 +84,11 @@
     (when (overlayp overlay)
       (overlay-get overlay 'ratex-image))))
 
-(defun ratex-set-overlay-style (key style)
-  "Set STYLE for overlay KEY."
-  (let ((overlay (ratex-overlay-for-key key)))
-    (when (overlayp overlay)
-      (ratex--overlay-apply-style overlay style))))
-
-(defun ratex--overlay-apply-style (overlay style)
-  "Apply STYLE to OVERLAY using its stored image."
+(defun ratex--overlay-apply-style (overlay)
+  "Apply stored image in OVERLAY to its display property."
   (let ((image (overlay-get overlay 'ratex-image)))
-    (cond
-     ((eq style 'below)
-      (overlay-put overlay 'display nil)
-      (overlay-put overlay 'after-string
-                   (concat "\n" (propertize " " 'display image) "\n")))
-     (t
-      (overlay-put overlay 'after-string nil)
-      (overlay-put overlay 'display image))))
-  (overlay-put overlay 'ratex-render-style style))
+    (overlay-put overlay 'after-string nil)
+    (overlay-put overlay 'display image)))
 
 (defun ratex-update-overlay-scale ()
   "Update the scale of all RaTeX overlays in the current buffer."

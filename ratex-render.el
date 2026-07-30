@@ -6,7 +6,6 @@
 (require 'subr-x)
 (require 'ratex-math-detect)
 (require 'ratex-overlays)
-;; posframe is optional; load it dynamically when enabled.
 
 (defvar ratex-mode)
 
@@ -18,113 +17,86 @@
   "Default backend SVG font size."
   :type 'number)
 
-(defcustom ratex-svg-padding 2.0
-  "Default SVG padding sent to the backend."
-  :type 'number)
-
-(defcustom ratex-font-dir nil
-  "Directory containing KaTeX .ttf font files."
-  :type '(choice (const :tag "Auto detect" nil) directory))
-
-(defcustom ratex-edit-preview nil
-  "Preview style used while editing formulae."
-  :type '(choice (const :tag "Disable" nil)
-                 (const :tag "Posframe" posframe)
-                 (const :tag "Minibuffer" minibuffer)))
-
-(defcustom ratex-render-color nil
-  "Override formula colour sent to backend rendering."
-  :type '(choice (const :tag "Backend default" nil) string))
-
-(defcustom ratex-dark-render-color "white"
-  "Formula colour used when the current frame uses a dark background."
-  :type '(choice (const :tag "Backend default" nil) string))
-
-(defcustom ratex-light-render-color "black"
-  "Formula colour used when the current frame uses a light background."
-  :type '(choice (const :tag "Backend default" nil) string))
-
-(defcustom ratex-posframe-background-color nil
-  "Override background colour for RaTeX posframe preview."
-  :type '(choice (const :tag "Theme aware default" nil) string))
-
-(defcustom ratex-dark-posframe-background-color "black"
-  "Posframe background colour used when the current frame uses a dark background."
-  :type '(choice (const :tag "Theme default" nil) string))
-
-(defcustom ratex-light-posframe-background-color "white"
-  "Posframe background colour used when the current frame uses a light background."
-  :type '(choice (const :tag "Theme default" nil) string))
-
-(defcustom ratex-posframe-border-color "gray70"
-  "Border colour for RaTeX posframe preview."
+(defcustom ratex-color "default"
+  "Formula colour passed to the backend renderer.
+Can be a colour name (for example \"white\" or \"black\"), a hex code,
+or \"default\" to automatically use the frame foreground colour."
   :type 'string)
-
-(defcustom ratex-posframe-poshandler
-  'ratex-posframe-poshandler-point-bottom-left-corner-offset
-  "Poshandler function used to place the RaTeX posframe preview."
-  :type 'function)
-
-(defcustom ratex-theme-change-refresh-scope 'all
-  "How RaTeX refreshes previews after a theme change."
-  :type '(choice (const :tag "Refresh all RaTeX buffers" all)
-                 (const :tag "Refresh current buffer only" current)
-                 (const :tag "Do not refresh automatically" nil)))
-(defvar-local ratex--render-cache nil)
-(defvar-local ratex--inflight-requests nil)
-(defvar-local ratex--inflight-waiters nil)
-(defvar-local ratex--last-error nil)
-(defvar-local ratex--active-fragment nil)
-(defvar-local ratex--posframe-visible nil)
-(defvar-local ratex--posframe-fragment nil)
-(defvar-local ratex--minibuffer-visible nil)
-(defvar-local ratex--minibuffer-fragment nil)
-(defvar-local ratex--minibuffer-image nil)
-(defvar-local ratex--preview-enabled nil)
-(defvar-local ratex--refresh-timer nil)
-(defvar-local ratex--refresh-scan-timer nil)
-(defvar-local ratex--refresh-queue nil)
-(defvar-local ratex--refresh-generation 0)
-(defvar ratex--theme-refresh-timer nil)
-(defconst ratex--posframe-buffer " *ratex-preview*")
-(defconst ratex--posframe-offset-y 5)
-(defconst ratex--refresh-batch-size 50)
 
 (defcustom ratex-executable-path "render-svg"
   "The path to the render-svg executable.
 Set this to an absolute path if the binary is not in your exec-path."
   :type 'string)
 
-(defun ratex-render-math-async (math-string callback)
-  "Render MATH-STRING via render-svg and pass the result to CALLBACK."
+(defvar-local ratex--render-cache nil)
+(defvar-local ratex--inflight-requests nil)
+(defvar-local ratex--inflight-waiters nil)
+(defvar-local ratex--last-error nil)
+(defvar-local ratex--active-fragment nil)
+(defvar-local ratex--refresh-timer nil)
+(defvar-local ratex--refresh-scan-timer nil)
+(defvar-local ratex--refresh-queue nil)
+(defvar-local ratex--refresh-generation 0)
+
+(defconst ratex--refresh-batch-size 50)
+
+(defvar ratex-enter-fragment-hook nil
+  "Hook run when point enters a RaTeX math fragment.
+Functions receive two arguments: the FRAGMENT property list and the
+rendered SVG image object (if available in the cache).")
+
+(defvar ratex-leave-fragment-hook nil
+  "Hook run when point leaves a RaTeX math fragment.
+Functions receive one argument: the FRAGMENT property list that was
+just exited.")
+
+(defun ratex--effective-color ()
+  "Return effective formula colour string for rendering."
+  (let ((col (if (or (null ratex-color) (equal ratex-color "default"))
+                 (or (frame-parameter nil 'foreground-color)
+                     (face-attribute 'default :foreground nil t)
+                     "black")
+               ratex-color)))
+    (if (or (null col) (equal col "unspecified"))
+        "black"
+      col)))
+
+(defun ratex-render-math-batch-async (math-strings callback)
+  "Render a list of MATH-STRINGS via the backend and pass the results to CALLBACK."
   (let* ((origin-buffer (current-buffer))
-         (buf-name (format " *ratex-svg-%s*" (md5 math-string)))
-         (output-buf (generate-new-buffer buf-name))
-         (color (ratex--effective-render-color))
+         (output-buf (generate-new-buffer " *ratex-svg-batch*"))
          (cmd `(,ratex-executable-path "--stdout"
                                        "--font-size" ,(number-to-string ratex-font-size)
-                                       ,@(when color (list "--color" color))))
-         (single-line-math (replace-regexp-in-string "[\r\n]+" " " math-string))
+                                       "--color" ,(ratex--effective-color)))
+         
+         (payload (mapconcat (lambda (s) (replace-regexp-in-string "[\r\n]+" " " s))
+                             math-strings
+                             "\n"))
+         
          (proc (make-process
-                :name "ratex-render"
+                :name "ratex-render-batch"
                 :buffer output-buf
                 :command cmd
                 :connection-type 'pipe
                 :sentinel (lambda (process event)
                             (when (string-match-p "finished" event)
-                              (let* ((raw-output (with-current-buffer (process-buffer process)
-                                                   (buffer-string)))
-                                     (svg-data raw-output)
-                                     (start (string-match "<svg" raw-output))
-                                     (end (string-match "</svg>" raw-output start)))
-                                (when (and start end)
-                                  (setq svg-data (substring raw-output start (+ end 6))))
+                              (let ((raw-output (with-current-buffer (process-buffer process)
+                                                  (buffer-string)))
+                                    (svg-list nil)
+                                    (start 0))
+                                
+                                (while (string-match "<svg" raw-output start)
+                                  (let* ((svg-start (match-beginning 0))
+                                         (svg-end (string-match "</svg>" raw-output svg-start)))
+                                    (when svg-end
+                                      (push (substring raw-output svg-start (+ svg-end 6)) svg-list)
+                                      (setq start (+ svg-end 6)))))
                                 
                                 (when (buffer-live-p origin-buffer)
                                   (with-current-buffer origin-buffer
-                                    (funcall callback svg-data))))
+                                    (funcall callback (nreverse svg-list)))))
                               (kill-buffer (process-buffer process)))))))
-    (process-send-string proc (concat single-line-math "\n"))
+    (process-send-string proc (concat payload "\n"))
     (process-send-eof proc)))
 
 (defun ratex-reset-buffer-state ()
@@ -134,12 +106,6 @@ Set this to an absolute path if the binary is not in your exec-path."
   (setq-local ratex--inflight-waiters (make-hash-table :test #'equal))
   (setq-local ratex--last-error nil)
   (setq-local ratex--active-fragment nil)
-  (setq-local ratex--posframe-visible nil)
-  (setq-local ratex--posframe-fragment nil)
-  (setq-local ratex--minibuffer-visible nil)
-  (setq-local ratex--minibuffer-fragment nil)
-  (setq-local ratex--minibuffer-image nil)
-  (setq-local ratex--preview-enabled nil)
   (ratex--cancel-refresh-timer)
   (setq-local ratex--refresh-queue nil)
   (setq-local ratex--refresh-generation 0))
@@ -166,56 +132,31 @@ currently under point."
 (defun ratex-initialize-previews ()
   "Render all formulas once and initialize point tracking."
   (ratex-refresh-previews t)
-  (setq ratex--preview-enabled (and (ratex--preview-style) t))
   (setq ratex--active-fragment (ratex-fragment-at-point))
   (when ratex--active-fragment
     (ratex-remove-overlay (ratex--fragment-key ratex--active-fragment))))
 
 (defun ratex-handle-post-command ()
-  "Update previews only when point enters/leaves math fragments."
+  "Update state and run hooks when point enters or leaves math fragments."
   (when ratex-mode
-    (when (ratex--preview-enabled-p)
-      (ratex--update-posframe-position))
     (let ((current (ratex--active-fragment-at-point))
           (previous ratex--active-fragment))
       (unless (and previous current
                    (ratex--same-active-context-p previous current))
+        
         (when previous
+          (run-hook-with-args 'ratex-leave-fragment-hook previous)
           (ratex--ensure-fragment-preview previous))
+        
         (when current
-          (ratex-remove-overlay (ratex--fragment-key current))))
-      (when (ratex--preview-enabled-p)
-        (ratex--handle-preview-at-point current))
+          (ratex-remove-overlay (ratex--fragment-key current))
+          (let* ((cache-key (ratex--cache-key current))
+                 (cached (gethash cache-key ratex--render-cache))
+                 (image (when (and cached (ratex--response-ok-p cached))
+                          (ratex--image-from-response cached))))
+            (run-hook-with-args 'ratex-enter-fragment-hook current image))))
+      
       (setq ratex--active-fragment current))))
-
-(defun ratex--refresh-buffer-previews (buffer)
-  "Refresh previews in BUFFER when `ratex-mode' is enabled there."
-  (when (buffer-live-p buffer)
-    (with-current-buffer buffer
-      (when (bound-and-true-p ratex-mode)
-        (ratex-refresh-previews t)))))
-
-(defun ratex--run-theme-refresh (origin-buffer scope)
-  "Refresh previews after a theme change from ORIGIN-BUFFER using SCOPE."
-  (setq ratex--theme-refresh-timer nil)
-  (pcase scope
-    ('all
-     (dolist (buffer (buffer-list))
-       (ratex--refresh-buffer-previews buffer)))
-    ('current
-     (ratex--refresh-buffer-previews origin-buffer))))
-
-(defun ratex--schedule-theme-refresh (&rest _args)
-  "Schedule a RaTeX refresh after a theme change."
-  (when (timerp ratex--theme-refresh-timer)
-    (cancel-timer ratex--theme-refresh-timer))
-  (when ratex-theme-change-refresh-scope
-    (setq ratex--theme-refresh-timer
-          (run-with-idle-timer
-           0.1 nil
-           #'ratex--run-theme-refresh
-           (current-buffer)
-           ratex-theme-change-refresh-scope))))
 
 (defun ratex--visible-fragments ()
   "Return fragments in the visible portion of the selected window."
@@ -224,14 +165,55 @@ currently under point."
          (end (min (point-max) (window-end window t))))
     (ratex-fragments-in-buffer beg end)))
 
+(defun ratex--render-batch (fragments)
+  "Render a list of FRAGMENTS in batch using `ratex-render-math-batch-async'."
+  (let (to-render)
+    (dolist (fragment fragments)
+      (let* ((fragment-key (ratex--fragment-key fragment))
+             (cache-key (ratex--cache-key fragment))
+             (cached (gethash cache-key ratex--render-cache))
+             (inflight (gethash cache-key (ratex--inflight-table))))
+        (cond
+         ((not (ratex--fragment-valid-p fragment))
+          (ratex-remove-overlay fragment-key))
+         (cached
+          (ratex--display-response fragment-key fragment cached))
+         (inflight
+          (ratex--enqueue-waiter cache-key fragment-key fragment))
+         (t
+          (ratex--enqueue-waiter cache-key fragment-key fragment)
+          (puthash cache-key t (ratex--inflight-table))
+          (push fragment to-render)))))
+    (when to-render
+      (setq to-render (nreverse to-render))
+      (let ((math-strings (mapcar (lambda (f) (plist-get f :content)) to-render)))
+        (ratex-render-math-batch-async
+         math-strings
+         (lambda (svg-list)
+           (cl-loop for f in to-render
+                    for svg in svg-list
+                    do (let* ((cache-key (ratex--cache-key f))
+                              (response (if svg
+                                            `((ok . t) (svg . ,svg))
+                                          `((ok . nil) (error . "Failed to render SVG")))))
+                         (remhash cache-key (ratex--inflight-table))
+                         (let ((waiters (gethash cache-key (ratex--inflight-waiters-table))))
+                           (remhash cache-key (ratex--inflight-waiters-table))
+                           (puthash cache-key response ratex--render-cache)
+                           (when ratex-mode
+                             (dolist (entry waiters)
+                               (ratex--display-if-visible
+                                (car entry)
+                                (cdr entry)
+                                response))))))))))))
+
 (defun ratex--enqueue-refresh-targets (targets)
   "Render TARGETS in bounded batches."
   (let ((generation ratex--refresh-generation)
         (first-batch (seq-take targets ratex--refresh-batch-size))
         (rest (nthcdr ratex--refresh-batch-size targets)))
     (setq ratex--refresh-queue rest)
-    (dolist (fragment first-batch)
-      (ratex--ensure-fragment-preview fragment))
+    (ratex--render-batch first-batch)
     (when ratex--refresh-queue
       (ratex--schedule-refresh-batch generation))))
 
@@ -278,8 +260,7 @@ currently under point."
              ratex--refresh-queue)
     (let ((batch (seq-take ratex--refresh-queue ratex--refresh-batch-size)))
       (setq ratex--refresh-queue (nthcdr ratex--refresh-batch-size ratex--refresh-queue))
-      (dolist (fragment batch)
-        (ratex--ensure-fragment-preview fragment))
+      (ratex--render-batch batch)
       (when ratex--refresh-queue
         (ratex--schedule-refresh-batch generation)))))
 
@@ -291,26 +272,6 @@ currently under point."
     (cancel-timer ratex--refresh-scan-timer))
   (setq ratex--refresh-timer nil)
   (setq ratex--refresh-scan-timer nil))
-
-(defun ratex--handle-preview-at-point (fragment)
-  "Show edit preview for FRAGMENT when enabled; otherwise hide it."
-  (if (and fragment (ratex--preview-enabled-p))
-      (let* ((image (ratex--overlay-image-for-fragment fragment))
-             (cached (unless image (ratex--cached-response-for-fragment fragment)))
-             (style (ratex--preview-style)))
-        (ratex-remove-overlay (ratex--fragment-key fragment))
-        (pcase style
-          ('posframe
-           (unless (ratex--display-posframe fragment cached image)
-             (ratex--ensure-fragment-preview fragment))
-           (ratex--update-posframe-position))
-          ('minibuffer
-           (unless (ratex--display-minibuffer fragment cached image)
-             (ratex--redisplay-minibuffer-preview)
-             (ratex--ensure-fragment-preview fragment)))
-          (_
-           (ratex--ensure-fragment-preview fragment))))
-    (ratex--hide-edit-preview)))
 
 (defun ratex--overlay-image-for-fragment (fragment)
   "Return cached overlay image for FRAGMENT, or nil."
@@ -402,7 +363,6 @@ currently under point."
            (<= begin (point))
            (< (point) end)))))
 
-
 (defun ratex--fragments-to-render (fragments active)
   "Return FRAGMENTS excluding ACTIVE."
   (cl-remove-if
@@ -432,43 +392,7 @@ currently under point."
   "Return render cache key for FRAGMENT."
   (list (string-trim (plist-get fragment :content))
         ratex-font-size
-        ratex-svg-padding
-        (ratex--effective-render-color)
-        (ratex--normalized-font-dir)))
-
-(defun ratex--normalize-color-value (value)
-  "Return VALUE as a trimmed color string, or nil."
-  (when (stringp value)
-    (let ((trimmed (string-trim value)))
-      (unless (string-empty-p trimmed)
-        trimmed))))
-
-(defun ratex--background-mode ()
-  "Return the current frame background mode."
-  (if (eq (frame-parameter nil 'background-mode) 'dark)
-      'dark
-    'light))
-
-(defun ratex--effective-render-color ()
-  "Return the effective render color string, or nil."
-  (or (ratex--normalize-color-value ratex-render-color)
-      (ratex--normalize-color-value
-       (if (eq (ratex--background-mode) 'dark)
-           ratex-dark-render-color
-         ratex-light-render-color))))
-
-(defun ratex--effective-posframe-background-color ()
-  "Return the effective posframe background color string, or nil."
-  (or (ratex--normalize-color-value ratex-posframe-background-color)
-      (ratex--normalize-color-value
-       (if (eq (ratex--background-mode) 'dark)
-           ratex-dark-posframe-background-color
-         ratex-light-posframe-background-color))))
-
-(defun ratex--normalized-font-dir ()
-  "Return normalized font directory for cache keys, or nil."
-  (when ratex-font-dir
-    (expand-file-name ratex-font-dir)))
+        (ratex--effective-color)))
 
 (defun ratex--inflight-table ()
   "Return request-tracking table for current buffer."
@@ -513,48 +437,9 @@ currently under point."
       (unless (gethash key keep)
         (ratex-remove-overlay key)))))
 
-(defun ratex--render-payload (fragment)
-  "Build the render request payload for FRAGMENT."
-  (let ((payload `((type . "render")
-                   (latex . ,(string-trim (plist-get fragment :content)))
-                   (font_size . ,ratex-font-size)
-                   (padding . ,ratex-svg-padding)
-                   (color . ,(ratex--effective-render-color))
-                   (embed_glyphs . t))))
-    (when ratex-font-dir
-      (nconc payload `((font_dir . ,(expand-file-name ratex-font-dir)))))
-    payload))
-
 (defun ratex--ensure-fragment-preview (fragment)
   "Ensure FRAGMENT preview is displayed or requested."
-  (let* ((fragment-key (ratex--fragment-key fragment))
-         (cache-key (ratex--cache-key fragment))
-         (cached (gethash cache-key ratex--render-cache))
-         (inflight (gethash cache-key (ratex--inflight-table))))
-    (cond
-     ((not (ratex--fragment-valid-p fragment))
-      (ratex-remove-overlay fragment-key))
-     (cached
-      (ratex--display-response fragment-key fragment cached))
-     (inflight
-      (ratex--enqueue-waiter cache-key fragment-key fragment))
-     (t
-      (ratex--enqueue-waiter cache-key fragment-key fragment)
-      (puthash cache-key t (ratex--inflight-table))
-      (ratex-render-math-async
-       (plist-get fragment :content)
-       (lambda (svg-data)
-         (let ((response `((ok . t) (svg . ,svg-data))))
-           (remhash cache-key (ratex--inflight-table))
-           (let ((waiters (gethash cache-key (ratex--inflight-waiters-table))))
-             (remhash cache-key (ratex--inflight-waiters-table))
-             (puthash cache-key response ratex--render-cache)
-             (when ratex-mode
-               (dolist (entry waiters)
-                 (ratex--display-if-visible
-                  (car entry)
-                  (cdr entry)
-                  response)))))))))))
+  (ratex--render-batch (list fragment)))
 
 (defun ratex--display-if-visible (fragment-key fragment response)
   "Display RESPONSE for FRAGMENT-KEY if FRAGMENT should still be visible."
@@ -563,16 +448,11 @@ currently under point."
      ((not (ratex--fragment-valid-p fragment))
       (ratex-remove-overlay fragment-key))
      ((and active (ratex--same-active-context-p fragment active))
-      (if (ratex--preview-enabled-p)
-          (progn
-            (ratex-remove-overlay fragment-key)
-            (unless (ratex--display-edit-preview fragment response)
-              (ratex--ensure-fragment-preview fragment)))
-        (ratex-remove-overlay fragment-key)))
+      (ratex-remove-overlay fragment-key))
      (t
-      (ratex--display-response fragment-key fragment response 'inline)))))
+      (ratex--display-response fragment-key fragment response)))))
 
-(defun ratex--display-response (fragment-key fragment response &optional style)
+(defun ratex--display-response (fragment-key fragment response)
   "Display backend RESPONSE for FRAGMENT identified by FRAGMENT-KEY."
   (if (not (ratex--response-ok-p response))
       (progn
@@ -583,170 +463,20 @@ currently under point."
          (plist-get fragment :end)
          (ratex--error-image ratex--last-error)
          (format "RaTeX render failed: %s" ratex--last-error)
-         fragment
-         (or style 'inline))
+         fragment)
         (when ratex--last-error
           (message "RaTeX render failed: %s" ratex--last-error)))
     (let ((image (ratex--image-from-response response)))
       (setq ratex--last-error nil)
-      (if (and (ratex--preview-enabled-p)
-               (ratex--point-in-fragment-p fragment))
-          (progn
-            (ratex-remove-overlay fragment-key)
-            (ratex--display-edit-preview fragment response image))
+      (if (ratex--point-in-fragment-p fragment)
+          (ratex-remove-overlay fragment-key)
         (ratex-show-overlay
          fragment-key
          (plist-get fragment :begin)
          (plist-get fragment :end)
          image
          (format "RaTeX %s" (if (alist-get 'cached response) "cached" "rendered"))
-         fragment
-         (or style 'inline))))))
-
-(defun ratex--display-edit-preview (fragment &optional response image)
-  "Display RESPONSE or IMAGE using the active edit preview style for FRAGMENT."
-  (pcase (ratex--preview-style)
-    ('posframe
-     (ratex--display-posframe fragment response image))
-    ('minibuffer
-     (ratex--display-minibuffer fragment response image))
-    (_ nil)))
-
-
-
-(defun ratex--preview-enabled-p ()
-  "Return non-nil when the preview toggle and posframe are enabled."
-  (and ratex--preview-enabled
-       (ratex--preview-style)))
-
-(defun ratex--preview-style ()
-  "Return active edit preview style or nil."
-  ratex-edit-preview)
-
-(defun ratex--ensure-posframe-loaded ()
-  "Return non-nil when posframe is available; load it if needed."
-  (or (featurep 'posframe)
-      (require 'posframe nil t)))
-
-(defun ratex--display-posframe (fragment &optional response image)
-  "Display IMAGE (or RESPONSE) in a posframe for FRAGMENT."
-  (when (and (eq (ratex--preview-style) 'posframe)
-             (ratex--ensure-posframe-loaded)
-             (featurep 'posframe)
-             (fboundp 'posframe-workable-p)
-             (posframe-workable-p)
-             (ratex--point-in-fragment-p fragment))
-    (let ((image (or image (and response (ratex--preview-image-from-response response)))))
-      (when image
-        (with-current-buffer (get-buffer-create ratex--posframe-buffer)
-          (erase-buffer)
-          (insert (propertize " " 'display image)))
-        (posframe-show
-         ratex--posframe-buffer
-         :position (point)
-         :poshandler (or ratex-posframe-poshandler
-                         #'ratex-posframe-poshandler-point-bottom-left-corner-offset)
-         :border-width 1
-         :border-color ratex-posframe-border-color
-         :background-color (ratex--effective-posframe-background-color))
-        (setq ratex--posframe-visible t)
-        (setq ratex--posframe-fragment fragment)
-        t))))
-
-(defun ratex-posframe-poshandler-point-bottom-left-corner-offset (info)
-  "Position posframe 5px below `posframe-poshandler-point-bottom-left-corner`."
-  (let* ((base (posframe-poshandler-point-bottom-left-corner info))
-         (x (car base))
-         (y (cdr base)))
-    (cons x (+ y ratex--posframe-offset-y))))
-
-(defun ratex--hide-posframe ()
-  "Hide the posframe preview."
-  (when (featurep 'posframe)
-    (when ratex--posframe-visible
-      (posframe-hide ratex--posframe-buffer))
-    (setq ratex--posframe-visible nil)
-    (setq ratex--posframe-fragment nil)))
-
-(defun ratex--display-minibuffer (fragment &optional response image)
-  "Display IMAGE (or RESPONSE) in the minibuffer for FRAGMENT."
-  (when (ratex--point-in-fragment-p fragment)
-    (let ((image (or image (and response (ratex--preview-image-from-response response)))))
-      (when image
-        (ratex--replace-minibuffer-preview fragment image)
-        t))))
-
-(defun ratex--replace-minibuffer-preview (fragment image)
-  "Replace the minibuffer preview for FRAGMENT with IMAGE."
-  (message "%s" (propertize " " 'display image))
-  (setq ratex--minibuffer-visible t)
-  (setq ratex--minibuffer-fragment fragment)
-  (setq ratex--minibuffer-image image)
-  t)
-
-(defun ratex--redisplay-minibuffer-preview ()
-  "Redisplay the last minibuffer preview image, if any."
-  (when (and ratex--minibuffer-visible ratex--minibuffer-image)
-    (message "%s" (propertize " " 'display ratex--minibuffer-image))
-    t))
-
-(defun ratex--hide-minibuffer ()
-  "Hide minibuffer preview if visible."
-  (when ratex--minibuffer-visible
-    (message nil)
-    (setq ratex--minibuffer-visible nil)
-    (setq ratex--minibuffer-fragment nil)
-    (setq ratex--minibuffer-image nil)))
-
-(defun ratex--hide-edit-preview ()
-  "Hide whichever edit preview is active."
-  (ratex--hide-posframe)
-  (ratex--hide-minibuffer))
-
-(defun ratex--update-posframe-position ()
-  "Keep posframe aligned with point while editing."
-  (when (and ratex--posframe-visible
-             (eq (ratex--preview-style) 'posframe)
-             (ratex--ensure-posframe-loaded)
-             (featurep 'posframe)
-             (fboundp 'posframe-workable-p)
-             (posframe-workable-p))
-    (if (ratex--point-in-fragment-p ratex--posframe-fragment)
-        (posframe-show
-         ratex--posframe-buffer
-         :position (point)
-         :poshandler (or ratex-posframe-poshandler
-                         #'ratex-posframe-poshandler-point-bottom-left-corner-offset)
-         :border-width 1
-         :border-color ratex-posframe-border-color
-         :background-color (ratex--effective-posframe-background-color))
-      (ratex--hide-posframe))))
-
-(defun ratex--update-minibuffer-preview ()
-  "Keep minibuffer preview visible while point stays inside fragment."
-  (when ratex--minibuffer-visible
-    (unless (ratex--point-in-fragment-p ratex--minibuffer-fragment)
-      (ratex--hide-minibuffer))))
-
-(defun ratex-toggle-preview-at-point ()
-  "Toggle the RaTeX posframe preview for the formula at point."
-  (interactive)
-  (when (ratex--preview-style)
-    (setq ratex--preview-enabled (not ratex--preview-enabled))
-    (if ratex--preview-enabled
-        (ratex--handle-preview-at-point (ratex--active-fragment-at-point))
-      (ratex--hide-edit-preview)
-      (let ((fragment (ratex--active-fragment-at-point)))
-        (when fragment
-          (ratex--ensure-fragment-preview fragment))))))
-
-(defun ratex-handle-buffer-switch ()
-  "Clear previews for all ratex buffers when switching buffers."
-  (when (ratex--preview-style)
-    (dolist (buffer (buffer-list))
-      (with-current-buffer buffer
-        (when ratex-mode
-          (ratex--hide-edit-preview))))))
+         fragment)))))
 
 (defun ratex--fragments-overlap-p (a b)
   "Return non-nil if fragment A overlaps fragment B."
@@ -755,10 +485,6 @@ currently under point."
         (bb (plist-get b :begin))
         (be (plist-get b :end)))
     (and (< ab be) (< bb ae))))
-
-(advice-add 'load-theme :after #'ratex--schedule-theme-refresh)
-(advice-add 'enable-theme :after #'ratex--schedule-theme-refresh)
-(advice-add 'disable-theme :after #'ratex--schedule-theme-refresh)
 
 (provide 'ratex-render)
 

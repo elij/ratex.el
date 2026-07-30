@@ -159,94 +159,6 @@
                   (expect (ratex-rendered-overlay-at-point-p) :to-be nil)
                   (delete-overlay overlay)))))
 
-(describe "ratex-render colour and background utilities"
-          (it "should normalise and trim hexadecimal and named colours"
-              (expect (ratex--normalize-color-value "  #ff00aa  ") :to-equal "#ff00aa")
-              (expect (ratex--normalize-color-value "   ") :to-be nil)
-              (expect (ratex--normalize-color-value nil) :to-be nil))
-
-          (it "should choose theme-aware colours dynamically based on frame background mode"
-              (let ((ratex-render-color nil)
-                    (ratex-dark-render-color "white")
-                    (ratex-light-render-color "black")
-                    (bg-mode 'dark))
-                (spy-on 'frame-parameter :and-call-fake (lambda (&rest _args) bg-mode))
-                (expect (ratex--effective-render-color) :to-equal "white")
-                (setq bg-mode 'light)
-                (expect (ratex--effective-render-color) :to-equal "black")))
-
-          (it "should respect explicit user overrides for render colours"
-              (let ((ratex-render-color "  red  ")
-                    (ratex-dark-render-color "white")
-                    (ratex-light-render-color "black"))
-                (spy-on 'frame-parameter :and-call-fake (lambda (&rest _args) 'dark))
-                (expect (ratex--effective-render-color) :to-equal "red")))
-
-          (it "should choose background posframe colours dynamically based on frame background mode"
-              (let ((ratex-posframe-background-color nil)
-                    (ratex-dark-posframe-background-color "black")
-                    (ratex-light-posframe-background-color "white")
-                    (bg-mode 'dark))
-                (spy-on 'frame-parameter :and-call-fake (lambda (&rest _args) bg-mode))
-                (expect (ratex--effective-posframe-background-color) :to-equal "black")
-                (setq bg-mode 'light)
-                (expect (ratex--effective-posframe-background-color) :to-equal "white")))
-
-          (it "should respect explicit user overrides for posframe background colours"
-              (let ((ratex-posframe-background-color "  gray10  ")
-                    (ratex-dark-posframe-background-color "black")
-                    (ratex-light-posframe-background-color "white"))
-                (spy-on 'frame-parameter :and-call-fake (lambda (&rest _args) 'light))
-                (expect (ratex--effective-posframe-background-color) :to-equal "gray10"))))
-
-(describe "ratex-render theme and configuration updates"
-          (it "should trigger a preview refresh across all active buffers"
-              (let ((buf-a (get-buffer-create (generate-new-buffer-name " *ratex-theme-a*")))
-                    (buf-b (get-buffer-create (generate-new-buffer-name " *ratex-theme-b*")))
-                    (buf-c (get-buffer-create (generate-new-buffer-name " *ratex-theme-c*")))
-                    refreshed)
-                (unwind-protect
-                    (progn
-                      (with-current-buffer buf-a
-                        (setq-local ratex-mode t))
-                      (with-current-buffer buf-b
-                        (setq-local ratex-mode t))
-                      (spy-on 'ratex-refresh-previews :and-call-fake
-                              (lambda (&optional include-active)
-                                (push (list (current-buffer) include-active) refreshed)))
-                      (ratex--run-theme-refresh buf-a 'all)
-                      (expect (length refreshed) :to-be 2)
-                      (expect (member (list buf-a t) refreshed) :not :to-be nil)
-                      (expect (member (list buf-b t) refreshed) :not :to-be nil)
-                      (expect (member (list buf-c t) refreshed) :to-be nil))
-                  (kill-buffer buf-a)
-                  (kill-buffer buf-b)
-                  (kill-buffer buf-c))))
-
-          (it "should trigger a preview refresh within the current buffer only"
-              (let ((buf-a (get-buffer-create (generate-new-buffer-name " *ratex-theme-current-a*")))
-                    (buf-b (get-buffer-create (generate-new-buffer-name " *ratex-theme-current-b*")))
-                    refreshed)
-                (unwind-protect
-                    (progn
-                      (with-current-buffer buf-a
-                        (setq-local ratex-mode t))
-                      (with-current-buffer buf-b
-                        (setq-local ratex-mode t))
-                      (spy-on 'ratex-refresh-previews :and-call-fake
-                              (lambda (&optional include-active)
-                                (push (list (current-buffer) include-active) refreshed)))
-                      (ratex--run-theme-refresh buf-b 'current)
-                      (expect refreshed :to-equal (list (list buf-b t))))
-                  (kill-buffer buf-a)
-                  (kill-buffer buf-b))))
-
-          (it "should not schedule a refresh when automatic refresh is disabled"
-              (spy-on 'run-with-idle-timer)
-              (let ((ratex-theme-change-refresh-scope nil))
-                (ratex--schedule-theme-refresh)
-                (expect 'run-with-idle-timer :not :to-have-been-called))))
-
 (describe "ratex-render bulk math fragment detection"
           (it "should detect multiple mathematical fragments in a single buffer"
               (with-temp-buffer
@@ -284,13 +196,14 @@
           (it "should render all non-active previews when refreshing"
               (with-temp-buffer
                 (latex-mode)
+                (ratex-reset-buffer-state)
                 (insert "a \\(x\\) b \\(y\\) c")
                 (syntax-propertize (point-max))
                 (goto-char 6)
                 (let (rendered)
-                  (spy-on 'ratex--ensure-fragment-preview :and-call-fake
-                          (lambda (fragment)
-                            (push (plist-get fragment :content) rendered)))
+                  (spy-on 'ratex-render-math-batch-async :and-call-fake
+                          (lambda (math-strings _cb)
+                            (setq rendered (append rendered math-strings))))
                   (spy-on 'ratex--drop-stale-overlays :and-return-value nil)
                   (spy-on 'ratex--visible-fragments :and-call-fake
                           (lambda () (ratex-fragments-in-buffer)))
@@ -301,13 +214,14 @@
           (it "should render all previews including active when include-active is non-nil"
               (with-temp-buffer
                 (latex-mode)
+                (ratex-reset-buffer-state)
                 (insert "a \\(x\\) b \\(y\\) c")
                 (syntax-propertize (point-max))
                 (goto-char 6)
                 (let (rendered)
-                  (spy-on 'ratex--ensure-fragment-preview :and-call-fake
-                          (lambda (fragment)
-                            (push (plist-get fragment :content) rendered)))
+                  (spy-on 'ratex-render-math-batch-async :and-call-fake
+                          (lambda (math-strings _cb)
+                            (setq rendered (append rendered math-strings))))
                   (spy-on 'ratex--drop-stale-overlays :and-return-value nil)
                   (spy-on 'ratex--visible-fragments :and-call-fake
                           (lambda () (ratex-fragments-in-buffer)))
@@ -318,14 +232,15 @@
           (it "should queue refresh tasks and run them in batch sizes"
               (with-temp-buffer
                 (latex-mode)
+                (ratex-reset-buffer-state)
                 (let ((ratex--refresh-batch-size 2)
                       rendered)
                   (insert "\\(a\\) \\(b\\) \\(c\\)")
                   (syntax-propertize (point-max))
                   (setq-local ratex-mode t)
-                  (spy-on 'ratex--ensure-fragment-preview :and-call-fake
-                          (lambda (fragment)
-                            (push (plist-get fragment :content) rendered)))
+                  (spy-on 'ratex-render-math-batch-async :and-call-fake
+                          (lambda (math-strings _cb)
+                            (setq rendered (append rendered math-strings))))
                   (spy-on 'ratex--drop-stale-overlays :and-return-value nil)
                   (spy-on 'ratex--visible-fragments :and-call-fake
                           (lambda () (ratex-fragments-in-buffer)))
@@ -335,44 +250,47 @@
                   (expect (sort rendered #'string<) :to-equal '("a" "b"))
                   (expect (length ratex--refresh-queue) :to-be 1)))))
 
+(describe "ratex--effective-color"
+          (it "should resolve default color to frame foreground color or black"
+              (let ((ratex-color "default")
+                    (expected (or (frame-parameter nil 'foreground-color)
+                                  (face-attribute 'default :foreground nil t)
+                                  "black")))
+                (expect (ratex--effective-color) :to-equal expected)))
+
+          (it "should resolve default color to frame foreground color when set"
+              (let ((ratex-color "default"))
+                (spy-on 'frame-parameter :and-return-value "red")
+                (expect (ratex--effective-color) :to-equal "red")))
+
+          (it "should return explicit color when ratex-color is set to white or hex"
+              (let ((ratex-color "white"))
+                (expect (ratex--effective-color) :to-equal "white"))
+              (let ((ratex-color "#123456"))
+                (expect (ratex--effective-color) :to-equal "#123456"))))
+
 (describe "ratex-render cache key generation"
-          (it "should generate different cache keys when render colours change"
+          (it "should generate different cache keys when font size changes"
               (with-temp-buffer
                 (latex-mode)
                 (insert "\\(x\\)")
                 (syntax-propertize (point-max))
                 (let* ((fragment (car (ratex-fragments-in-buffer)))
-                       (ratex-render-color "#000000")
+                       (ratex-font-size 16.0)
                        (key-a (ratex--cache-key fragment))
-                       (ratex-render-color "#ffffff")
+                       (ratex-font-size 20.0)
                        (key-b (ratex--cache-key fragment)))
                   (expect key-a :not :to-equal key-b))))
 
-          (it "should generate different cache keys when theme-aware render colours change"
+          (it "should generate different cache keys when formula color changes"
               (with-temp-buffer
                 (latex-mode)
                 (insert "\\(x\\)")
                 (syntax-propertize (point-max))
                 (let* ((fragment (car (ratex-fragments-in-buffer)))
-                       (ratex-render-color nil)
-                       (ratex-dark-render-color "#ffffff")
-                       (ratex-light-render-color "#000000")
-                       (bg-mode 'dark))
-                  (spy-on 'frame-parameter :and-call-fake (lambda (&rest _args) bg-mode))
-                  (let ((key-a (ratex--cache-key fragment)))
-                    (setq bg-mode 'light)
-                    (let ((key-b (ratex--cache-key fragment)))
-                      (expect key-a :not :to-equal key-b))))))
-
-          (it "should generate different cache keys when the font directory changes"
-              (with-temp-buffer
-                (latex-mode)
-                (insert "\\(x\\)")
-                (syntax-propertize (point-max))
-                (let* ((fragment (car (ratex-fragments-in-buffer)))
-                       (ratex-font-dir "/tmp/fonts-a")
+                       (ratex-color "white")
                        (key-a (ratex--cache-key fragment))
-                       (ratex-font-dir "/tmp/fonts-b")
+                       (ratex-color "#123456")
                        (key-b (ratex--cache-key fragment)))
                   (expect key-a :not :to-equal key-b)))))
 
@@ -389,8 +307,8 @@
                           (lambda (data type data-p &rest props)
                             (list :data data :type type :data-p data-p :props props)))
                   (spy-on 'ratex-show-overlay :and-call-fake
-                          (lambda (key beg end image help-echo overlay-fragment style)
-                            (setq shown (list key beg end image help-echo overlay-fragment style))))
+                          (lambda (key beg end image help-echo overlay-fragment)
+                            (setq shown (list key beg end image help-echo overlay-fragment))))
                   (ratex--display-response
                    fragment-key
                    fragment
@@ -428,6 +346,7 @@
                 (syntax-propertize (point-max))
                 (let (removed ensured)
                   (setq-local ratex-mode t)
+                  (ratex-reset-buffer-state)
                   (setq-local ratex--active-fragment nil)
                   (spy-on 'ratex-remove-overlay :and-call-fake
                           (lambda (key)
@@ -452,6 +371,7 @@
                 (syntax-propertize (point-max))
                 (goto-char 4)
                 (setq-local ratex-mode t)
+                (ratex-reset-buffer-state)
                 (setq-local ratex--active-fragment (ratex-fragment-at-point))
                 (insert "y")
                 (syntax-propertize (point-max))
@@ -474,6 +394,7 @@
                 (let ((fragment '(:begin 1 :end 6 :content "x" :open "\\(" :close "\\)"))
                       ensured)
                   (setq-local ratex-mode t)
+                  (ratex-reset-buffer-state)
                   (setq-local ratex--active-fragment nil)
                   (ratex-show-overlay "1:6:x" 1 6 "IMG" nil fragment)
                   (goto-char 3)
@@ -486,121 +407,67 @@
                   (expect (plist-get ratex--active-fragment :content) :to-equal "x")
                   (goto-char 7)
                   (ratex-handle-post-command)
-                  (expect ensured :to-equal '("x"))))))
+                  (expect ensured :to-equal '("x")))))
 
-(describe "ratex-render minibuffer edit preview"
-          (it "should update minibuffer edit preview after a live edit"
+          (it "should call ratex-enter-fragment-hook with fragment and cached image when entering a fragment"
               (with-temp-buffer
                 (latex-mode)
-                (insert "\\(x\\)")
+                (insert "a \\(x\\) b")
                 (syntax-propertize (point-max))
-                (goto-char 3)
                 (setq-local ratex-mode t)
-                (setq-local ratex-edit-preview 'minibuffer)
-                (setq-local ratex--preview-enabled t)
-                (setq-local ratex--active-fragment (ratex-fragment-at-point))
-                (setq-local ratex--minibuffer-visible t)
-                (setq-local ratex--minibuffer-fragment ratex--active-fragment)
-                (insert "y")
-                (syntax-propertize (point-max))
-                (let (hidden ensured)
-                  (spy-on 'ratex--hide-minibuffer :and-call-fake
-                          (lambda ()
-                            (setq hidden t)))
-                  (spy-on 'ratex--ensure-fragment-preview :and-call-fake
-                          (lambda (fragment)
-                            (push (plist-get fragment :content) ensured)))
+                (ratex-reset-buffer-state)
+                (let* ((fragment (car (ratex-fragments-in-buffer)))
+                       (cache-key (ratex--cache-key fragment))
+                       (mock-img (list 'image :type 'svg :data "<svg/>"))
+                       called-args)
+                  (puthash cache-key '((ok . t) (svg . "<svg/>")) ratex--render-cache)
+                  (spy-on 'ratex--image-from-response :and-return-value mock-img)
+                  (add-hook 'ratex-enter-fragment-hook
+                            (lambda (frag img)
+                              (setq called-args (list frag img)))
+                            nil t)
+                  (goto-char 5)
                   (ratex-handle-post-command)
-                  (expect hidden :to-be nil)
-                  (expect ensured :to-equal '("yx")))))
+                  (expect (car called-args) :to-equal fragment)
+                  (expect (cadr called-args) :to-equal mock-img))))
 
-          (it "should keep old minibuffer image preview until replacement occurs"
+          (it "should call ratex-enter-fragment-hook with nil image when fragment is not cached"
               (with-temp-buffer
                 (latex-mode)
-                (insert "\\(x\\)")
+                (insert "a \\(x\\) b")
                 (syntax-propertize (point-max))
-                (goto-char 3)
                 (setq-local ratex-mode t)
-                (setq-local ratex-edit-preview 'minibuffer)
-                (setq-local ratex--preview-enabled t)
-                (setq-local ratex--active-fragment (ratex-fragment-at-point))
-                (setq-local ratex--minibuffer-visible t)
-                (setq-local ratex--minibuffer-fragment ratex--active-fragment)
-                (setq-local ratex--minibuffer-image "OLD-IMAGE")
-                (insert "y")
-                (syntax-propertize (point-max))
-                (let (messages ensured)
-                  (spy-on 'message :and-call-fake
-                          (lambda (format-string &rest args)
-                            (push (and format-string (apply #'format format-string args))
-                                  messages)))
-                  (spy-on 'ratex--ensure-fragment-preview :and-call-fake
-                          (lambda (fragment)
-                            (push (plist-get fragment :content) ensured)))
+                (ratex-reset-buffer-state)
+                (let* ((fragment (car (ratex-fragments-in-buffer)))
+                       called-args)
+                  (add-hook 'ratex-enter-fragment-hook
+                            (lambda (frag img)
+                              (setq called-args (list frag img)))
+                            nil t)
+                  (goto-char 5)
                   (ratex-handle-post-command)
-                  (expect ensured :to-equal '("yx"))
-                  (expect (length messages) :to-be 1)
-                  (expect (car messages) :not :to-be nil)
-                  (expect (car messages) :not :to-equal ""))))
+                  (expect (car called-args) :to-equal fragment)
+                  (expect (cadr called-args) :to-be nil))))
 
-          (it "should replace minibuffer preview image and visibility state"
-              (with-temp-buffer
-                (let ((fragment '(:begin 1 :end 6 :content "x" :open "\\(" :close "\\)"))
-                      message-text)
-                  (spy-on 'message :and-call-fake
-                          (lambda (format-string &rest args)
-                            (setq message-text (apply #'format format-string args))))
-                  (ratex--replace-minibuffer-preview fragment "NEW-IMAGE")
-                  (expect message-text :not :to-be nil)
-                  (expect ratex--minibuffer-visible :not :to-be nil)
-                  (expect ratex--minibuffer-fragment :to-equal fragment)
-                  (expect ratex--minibuffer-image :to-equal "NEW-IMAGE"))))
-
-          (it "should update minibuffer preview on display-if-visible when matching active fragment"
+          (it "should call ratex-leave-fragment-hook with the exited fragment when point leaves"
               (with-temp-buffer
                 (latex-mode)
-                (insert "\\(x\\)")
+                (insert "a \\(x\\) b")
                 (syntax-propertize (point-max))
-                (let* ((fragment (car (ratex-fragments-in-buffer)))
-                       (key (ratex--fragment-key fragment))
-                       displayed)
-                  (goto-char 3)
-                  (setq-local ratex-mode t)
-                  (setq-local ratex-edit-preview 'minibuffer)
-                  (setq-local ratex--preview-enabled t)
-                  (setq-local ratex--active-fragment fragment)
-                  (spy-on 'ratex--display-minibuffer :and-call-fake
-                          (lambda (value _response &optional _image)
-                            (setq displayed (plist-get value :content))
-                            t))
-                  (spy-on 'ratex-remove-overlay :and-return-value nil)
-                  (ratex--display-if-visible
-                   key fragment '((ok . t) (svg . "<svg/>") (baseline . 1.0) (height . 1.0)))
-                  (expect displayed :to-equal "x"))))
-
-          (it "should display an error in the minibuffer when rendering fails"
-              (with-temp-buffer
-                (latex-mode)
-                (insert "\\(\\bad{\\)")
-                (syntax-propertize (point-max))
-                (let* ((fragment (car (ratex-fragments-in-buffer)))
-                       (key (ratex--fragment-key fragment))
-                       displayed)
-                  (goto-char 4)
-                  (setq-local ratex-mode t)
-                  (setq-local ratex-edit-preview 'minibuffer)
-                  (setq-local ratex--preview-enabled t)
-                  (setq-local ratex--active-fragment fragment)
-                  (setq-local ratex--minibuffer-visible t)
-                  (setq-local ratex--minibuffer-fragment fragment)
-                  (spy-on 'message :and-call-fake
-                          (lambda (format-string &rest args)
-                            (setq displayed (apply #'format format-string args))))
-                  (spy-on 'ratex-remove-overlay :and-return-value nil)
-                  (ratex--display-if-visible
-                   key fragment '((ok . :false) (error . "parse error")))
-                  (expect displayed :not :to-be nil)
-                  (expect displayed :not :to-equal "")))))
+                (setq-local ratex-mode t)
+                (ratex-reset-buffer-state)
+                (goto-char 5)
+                (ratex-handle-post-command)
+                (let ((fragment ratex--active-fragment)
+                      exited-frag)
+                  (add-hook 'ratex-leave-fragment-hook
+                            (lambda (frag)
+                              (setq exited-frag frag))
+                            nil t)
+                  (spy-on 'ratex--ensure-fragment-preview :and-return-value nil)
+                  (goto-char 9)
+                  (ratex-handle-post-command)
+                  (expect exited-frag :to-equal fragment)))))
 
 (describe "ratex-render process coordination"
           (it "should process multiple requests for the same formula through a single async render call"
@@ -614,13 +481,15 @@
                        (first-key (ratex--fragment-key first))
                        (second-key (ratex--fragment-key second))
                        (request-count 0)
+                       passed-strings
                        callback
                        seen)
                   (setq-local ratex-mode t)
                   (ratex-reset-buffer-state)
-                  (spy-on 'ratex-render-math-async :and-call-fake
-                          (lambda (_math-string cb)
+                  (spy-on 'ratex-render-math-batch-async :and-call-fake
+                          (lambda (math-strings cb)
                             (setq request-count (1+ request-count))
+                            (setq passed-strings math-strings)
                             (setq callback cb)))
                   (spy-on 'ratex--display-if-visible :and-call-fake
                           (lambda (fragment-key _fragment _response)
@@ -628,9 +497,24 @@
                   (ratex--ensure-fragment-preview first)
                   (ratex--ensure-fragment-preview second)
                   (expect request-count :to-be 1)
-                  (funcall callback "<svg/>")
+                  (expect passed-strings :to-equal '("A"))
+                  (funcall callback '("<svg/>"))
                   (expect (sort seen #'string<)
                           :to-equal (sort (list first-key second-key) #'string<))))))
+
+(describe "ratex-render-math-batch-async"
+          (it "should pass --color argument in make-process command list"
+              (let ((ratex-color "#123456")
+                    passed-cmd)
+                (spy-on 'make-process :and-call-fake
+                        (lambda (&rest args)
+                          (setq passed-cmd (plist-get args :command))
+                          nil))
+                (spy-on 'process-send-string :and-return-value nil)
+                (spy-on 'process-send-eof :and-return-value nil)
+                (ratex-render-math-batch-async '("x") (lambda (_svgs) nil))
+                (expect (member "--color" passed-cmd) :not :to-be nil)
+                (expect (cadr (member "--color" passed-cmd)) :to-equal "#123456"))))
 
 (provide 'ratex-tests)
 

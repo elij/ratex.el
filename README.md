@@ -1,15 +1,14 @@
 # ratex.el
 
 > [!NOTE]  
-This is a fork of [ratex.el](https://github.com/gongshangzheng/ratex.el) with changes that can no longer be merged upstream. Doesn't have the ratex RPC and uses tex-mode.el for parsing. While it is compatible with GPL 3, this hasn't been defined by the original author.
+This is a fork of [ratex.el](https://github.com/gongshangzheng/ratex.el) with changes that can no longer be merged upstream. Doesn't have the ratex RPC (instead uses batch CLI) and uses tex-mode.el for parsing. While it is compatible with GPL 3, this hasn't been defined by the original author.
+
 
 [简体中文](./README.zh-CN.md)
 
-`ratex.el` is an Emacs-focused inline math preview package built on top of the
-upstream [RaTeX](https://github.com/erweixin/RaTeX) engine.
+`ratex.el` is an Emacs-focused inline maths preview package built on top of the upstream [RaTeX](https://github.com/erweixin/RaTeX) engine.
 
-It is designed to render LaTeX math fragments inside Emacs with a small async
-backend, SVG output, and minimal setup.
+It is designed to render LaTeX maths fragments inside Emacs with a small async backend, SVG output, and minimal setup.
 
 ## Demo
 
@@ -17,56 +16,45 @@ backend, SVG output, and minimal setup.
 
 ## Features
 
-- Async inline math preview inside Emacs
+- Async inline maths preview inside Emacs
 - SVG rendering backed by RaTeX
-- Automatic backend download on first use
+- Batch rendering of maths fragments via `ratex-render-math-batch-async`
+- Entry and exit hooks for fragment interaction via `ratex-enter-fragment-hook` and `ratex-leave-fragment-hook`
 - Lightweight in-buffer rendering flow
 - Works with `latex-mode`, `LaTeX-mode`, `org-mode`, and `markdown-mode`
 
-## Repository Layout
+## Repository layout
 
-- `vendor/ratex-core`: upstream RaTeX git submodule
-- `backend/`: Rust backend process used by Emacs
-- `lisp/`: Emacs Lisp package files
-- `bin/`: helper scripts
-- `test/`: Emacs-side tests
-- `docs/`: project notes and plans
+- `ratex.el`: core minor mode, user commands, and global setup
+- `ratex-render.el`: asynchronous batch rendering engine executing `ratex-executable-path`
+- `ratex-overlays.el`: overlay management and image display lifecycle
+- `ratex-math-detect.el`: LaTeX maths delimiter parsing and fragment detection
 
 ## Requirements
 
 - Emacs 29.1 or newer
-- A checkout with submodules initialized
+- A checkout with submodules initialised
+- The `render-svg` executable (or path configured via `ratex-executable-path`)
 
 ## Installation
 
-Clone the repository with submodules:
-
-```bash
-git clone --recurse-submodules https://github.com/gongshangzheng/ratex.el.git
-cd ratex.el
-```
-
-If you already cloned it without submodules:
-
-```bash
-git submodule update --init --recursive
-```
-
-## Emacs Setup
-
-Add this repository to your `load-path`, then load `ratex`:
 
 ```elisp
-(add-to-list 'load-path "/path/to/ratex.el/lisp")
+(package-vc-install '(ratex :url "https://github.com/elij/ratex.el"))
+```
+
+Or
+
+```elisp
+(add-to-list 'load-path "/path/to/ratex.el")
 (require 'ratex)
 ```
 
-Or with `use-package` (recommended for straight.el users):
+Or
 
 ```elisp
 (use-package ratex
-    :vc (:url "https://github.com/gongshangzheng/ratex.el" 
-            :lisp-dir "lisp")
+  :vc (:url "https://github.com/elij/ratex.el")
   :config
   (global-ratex-mode 1))
 ```
@@ -77,7 +65,7 @@ Enable it manually in the current buffer:
 M-x ratex-mode
 ```
 
-Or enable it automatically for common text/math modes:
+Or enable it automatically for common text and maths modes:
 
 ```elisp
 (require 'ratex)
@@ -90,8 +78,7 @@ In Org files, you can also control RaTeX per file with a keyword:
 #+ratex: t
 ```
 
-Use `#+ratex: nil` (or `off`) to disable it for a specific Org file, even when
-`global-ratex-mode` is enabled.
+Use `#+ratex: nil` (or `off`) to disable it for a specific Org file, even when `global-ratex-mode` is enabled.
 
 Equivalent explicit hook setup:
 
@@ -102,66 +89,30 @@ Equivalent explicit hook setup:
 (add-hook 'markdown-mode-hook #'ratex-mode)
 ```
 
-## How It Works
+## How it works
 
-When `ratex-mode` starts, it checks whether the backend binary exists at:
+Maths fragments are rendered asynchronously in batches using `ratex-render-math-batch-async`, which executes the binary configured by `ratex-executable-path` (defaulting to `"render-svg"`). The process passes fragment content strings to the executable and receives rendered SVG data in response.
 
-```text
-backend/target/release/ratex-editor-backend
-```
+When point moves into or out of maths fragments, `ratex.el` triggers dedicated hooks:
+- `ratex-enter-fragment-hook`: executed when point enters a fragment. Hook functions receive two arguments: the fragment property list and the cached SVG image object (or `nil` if not cached).
+- `ratex-leave-fragment-hook`: executed when point leaves a fragment. Hook functions receive one argument: the fragment property list that was exited.
 
-If the binary is missing, `ratex.el` automatically downloads the matching asset
-from the latest GitHub Release:
-
-```text
-https://github.com/gongshangzheng/ratex.el/releases/latest
-```
-
-After that, Emacs launches the downloaded backend binary directly.
+By default, when point enters a fragment, its inline overlay preview is hidden. When point leaves that fragment, it is rendered again and updated asynchronously.
 
 ## Usage
 
-The current interaction model is:
+The interaction model operates as follows:
+- When `ratex-mode` is enabled, visible formulas in the current buffer are rendered once.
+- When point enters a maths fragment, the inline overlay preview is hidden, and `ratex-enter-fragment-hook` runs.
+- While point stays inside that fragment, no background rendering occurs automatically.
+- When point leaves that fragment, `ratex-leave-fragment-hook` runs, and only that fragment is rendered again.
 
-- when `ratex-mode` is enabled, formulas in the current buffer are rendered once
-- when point enters a math fragment, preview is hidden
-- while point stays inside that fragment, no continuous rendering is triggered
-- when point leaves that fragment, only that fragment is rendered again
+All LaTeX delimiters are supported.
 
-In other words, `ratex.el` avoids full refresh on every command and uses a
-"render once on open + hide while editing + rerender on leave" flow.
-
-Supported delimiters in the current prototype:
-
-- `\(...\)`
-- `\[...\]`
-
-This package currently does not support dollar-delimited math. Use
-`\(...\)` and `\[...\]` instead; they are simpler and less error-prone in this
-codebase. To convert existing dollar-delimited formulas, run:
-
-```elisp
-M-x ratex-convert-delimiters
-```
-
-This replaces `$$...$$` with `\[...\]` and `$...$` with `\(...\)`.
-
-These cases are skipped by default and will not be rendered:
-
-- formulas inside code blocks (for example Org src/example/verbatim blocks and
-  Markdown fenced code blocks)
-- escaped delimiters (for example `\$`, `\\(`, `\\[`)
-
-You can also trigger a full buffer refresh manually with:
+You can trigger a full buffer refresh manually with:
 
 ```elisp
 M-x ratex-refresh-previews
-```
-
-If needed, you can reinstall the backend manually with:
-
-```elisp
-M-x ratex-download-backend
 ```
 
 ## Example
@@ -180,92 +131,99 @@ or:
 \]
 ```
 
-`ratex.el` will ask the backend to render the fragment and show the SVG preview
-through an overlay.
+`ratex.el` renders the fragment asynchronously and displays the SVG preview through an overlay.
 
-## Customization
+## Customisation
 
-Useful variables:
+Customisation options defined in `ratex-render.el`:
 
-- `ratex-backend-root`: explicit repository root for backend discovery
-- `ratex-backend-release-repo`: GitHub repository that hosts backend releases
-- `ratex-font-dir`: directory containing KaTeX `.ttf` font files (defaults to `vendor/ratex-core/fonts` inside the repo)
-- `ratex-font-size`: SVG font size sent to the backend
-- `ratex-svg-padding`: SVG padding sent to the backend
-- `ratex-dark-render-color` / `ratex-light-render-color`: theme-aware default formula colors selected from the current frame's `background-mode`
-- `ratex-render-color`: explicit formula color override; when nil, the dark/light defaults above are used
-- `ratex-edit-preview`: edit preview style (`nil`, `posframe`, or `minibuffer`)
-- `ratex-dark-posframe-background-color` / `ratex-light-posframe-background-color`: theme-aware posframe background colors selected from the current frame's `background-mode`
-- `ratex-posframe-background-color`: explicit posframe background override; when nil, the dark/light defaults above are used
-- `ratex-theme-change-refresh-scope`: whether a theme change refreshes all `ratex-mode` buffers, only the current buffer, or none
-- `ratex-auto-download-backend`: whether to download automatically
-- `ratex-backend-binary`: backend binary path
+- `ratex-font-size`: backend SVG font size (defaults to `16.0`).
+- `ratex-color`: formula colour string passed to the backend renderer (defaults to `"default"`, which dynamically uses the current frame foreground colour, or an explicit colour name or hex string).
+- `ratex-executable-path`: executable path for rendering (defaults to `"render-svg"`).
 
-### Edit Preview
-
-When `ratex-edit-preview` is set, a live preview is shown while editing a formula:
-
-- `nil` — no preview while editing (default)
-- `posframe` — floating popup near point; may occlude nearby text
-- `minibuffer` — preview in the minibuffer; lightweight and does not obstruct the buffer
-
-### Example Configuration
+### Example configuration
 
 ```elisp
 (use-package ratex
   :config
-  (setq ratex-backend-root "~/.emacs.d/straight/repos/ratex.el/")
-  (setq ratex-dark-render-color "white")
-  (setq ratex-light-render-color "black")
-  (setq ratex-edit-preview 'minibuffer)
-  (setq ratex-dark-posframe-background-color "black")
-  (setq ratex-light-posframe-background-color "white")
+  (setq ratex-color "default")
+  (setq ratex-font-size 16.0)
+  (setq ratex-executable-path "render-svg")
   (global-ratex-mode 1))
 ```
 
-If you want to force a single color regardless of the current theme, set the
-override variables directly:
+If you want an explicit formula colour regardless of the active frame theme:
 
 ```elisp
-(setq ratex-render-color "white")
-(setq ratex-posframe-background-color "black")
+(setq ratex-color "#ffffff")
 ```
 
-To control what happens after switching themes:
+## Real-time preview editing
+
+You can implement real-time preview editing while typing inside a fragment by connecting `ratex-enter-fragment-hook` and `ratex-leave-fragment-hook` with `after-change-functions`.
+
+### Posframe real-time editing
+
+This example uses `posframe` to display a floating child frame that updates as you edit:
 
 ```elisp
-(setq ratex-theme-change-refresh-scope 'all)     ; default
-;; or:
-;; (setq ratex-theme-change-refresh-scope 'current)
-;; (setq ratex-theme-change-refresh-scope nil)
+(defun ratex-posframe-update (&rest _)
+  "Update posframe preview while editing inside a fragment."
+  (when-let* ((current (ratex--active-fragment-at-point)))
+    (ratex-render-math-batch-async
+     (list (plist-get current :content))
+     (lambda (svgs)
+       (when-let* ((svg (car svgs)))
+         (posframe-show " *ratex-preview-posframe*"
+                        :string (propertize " " 'display (create-image svg 'svg t))
+                        :position (plist-get current :begin)))))))
+
+(add-hook 'ratex-enter-fragment-hook
+          (lambda (fragment image)
+            (add-hook 'after-change-functions #'ratex-posframe-update nil t)
+            (when image
+              (posframe-show " *ratex-preview-posframe*"
+                             :string (propertize " " 'display image)
+                             :position (plist-get fragment :begin)))))
+
+(add-hook 'ratex-leave-fragment-hook
+          (lambda (_)
+            (remove-hook 'after-change-functions #'ratex-posframe-update t)
+            (posframe-hide " *ratex-preview-posframe*")))
 ```
 
-If the backend cannot find KaTeX fonts (e.g. using a downloaded binary outside the
-repo), set `ratex-font-dir` to the directory containing the `.ttf` files:
+### Overlay real-time editing
+
+This example attaches an inline overlay directly below the fragment text:
 
 ```elisp
-(setq ratex-font-dir "/path/to/ratex.el/vendor/ratex-core/fonts")
+(defvar ratex-demo-overlay nil)
+
+(defun ratex-overlay-update (&rest _)
+  "Update inline overlay preview while editing inside a fragment."
+  (when-let* ((current (ratex--active-fragment-at-point)))
+    (ratex-render-math-batch-async
+     (list (plist-get current :content))
+     (lambda (svgs)
+       (when-let* ((svg (car svgs))
+                   (ov ratex-demo-overlay))
+         (move-overlay ov (plist-get current :end) (plist-get current :end))
+         (overlay-put ov 'after-string
+                      (concat "\n" (propertize " " 'display (create-image svg 'svg t)))))))))
+
+(add-hook 'ratex-enter-fragment-hook
+          (lambda (fragment image)
+            (add-hook 'after-change-functions #'ratex-overlay-update nil t)
+            (setq ratex-demo-overlay (make-overlay (plist-get fragment :end)
+                                                   (plist-get fragment :end)))
+            (when image
+              (overlay-put ratex-demo-overlay 'after-string
+                           (concat "\n" (propertize " " 'display image))))))
+
+(add-hook 'ratex-leave-fragment-hook
+          (lambda (_)
+            (remove-hook 'after-change-functions #'ratex-overlay-update t)
+            (when ratex-demo-overlay
+              (delete-overlay ratex-demo-overlay)
+              (setq ratex-demo-overlay nil))))
 ```
-
-If backend auto-discovery still fails in your setup, set `ratex-backend-root`
-explicitly. You can inspect the current detection result with:
-
-```elisp
-M-x ratex-diagnose-backend
-```
-
-## Current Status
-
-This is an early prototype. The core rendering path is working, but the package
-still needs more polish in areas such as:
-
-- mode-aware math detection
-- better stale-response handling
-- richer user-facing error reporting
-- packaging for MELPA or other package managers
-
-## License
-
-This repository currently contains original `ratex.el` integration code plus the
-vendored upstream `vendor/ratex-core` submodule, which keeps its own upstream
-license and history.
