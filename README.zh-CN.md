@@ -1,11 +1,13 @@
 # ratex.el
 
+> [!NOTE]  
+> 这是 [ratex.el](https://github.com/gongshangzheng/ratex.el) 的一个分支（fork）。包含了一些无法合并到上游的精简改动。去除了原版的 ratex RPC 机制（改为使用批处理 CLI），并改用 `tex-mode.el` 进行解析。虽然它与 GPL 3 兼容，但原作者尚未明确许可证。
+
 [English](./README.md)
 
-`ratex.el` 是一个面向 Emacs 的行内数学公式预览包，底层使用上游
-[RaTeX](https://github.com/erweixin/RaTeX) 引擎进行解析和 SVG 渲染。
+`ratex.el` 是一个面向 Emacs 的行内数学公式预览包，底层基于上游 [RaTeX](https://github.com/erweixin/RaTeX) 引擎。
 
-它的目标是在 Emacs 中提供一个轻量、异步、低打扰的数学公式预览体验。
+它的目标是通过微型的异步后端、SVG 输出和极简的配置，在 Emacs 中渲染 LaTeX 数学片段。
 
 ## 演示
 
@@ -13,81 +15,70 @@
 
 ## 功能特性
 
-- 在 Emacs 中异步预览数学公式
+- 在 Emacs 中异步预览行内数学公式
 - 基于 RaTeX 的 SVG 渲染
-- 第一次使用时自动下载后端
-- 通过 overlay 显示公式预览
-- 支持 `latex-mode`、`LaTeX-mode`、`org-mode`、`markdown-mode`
+- 通过 `ratex-render-math-batch-async` 批量渲染数学公式片段
+- 通过 `ratex-enter-fragment-hook` 和 `ratex-leave-fragment-hook` 提供与公式片段交互的进入和退出钩子
+- 借助 `tex-mode.el` 原生支持解析所有 LaTeX 分隔符（包括 `$` 和 `$$`）
+- 轻量级的 buffer 内渲染流程
+- 兼容 `latex-mode`、`LaTeX-mode`、`org-mode` 和 `markdown-mode`
 
 ## 仓库结构
 
-- `vendor/ratex-core`：上游 RaTeX git submodule
-- `backend/`：供 Emacs 调用的 Rust 后端进程
-- `lisp/`：Emacs Lisp 包源码
-- `bin/`：开发辅助脚本
-- `test/`：Emacs 侧测试
-- `docs/`：项目文档和规划
+- `ratex.el`：核心 minor mode，用户命令和全局设置
+- `ratex-render.el`：执行 `ratex-executable-path` 的异步批处理渲染引擎
+- `ratex-overlays.el`：overlay 管理和图像显示生命周期
+- `ratex-math-detect.el`：LaTeX 数学分隔符解析和片段检测
 
 ## 环境要求
 
 - Emacs 29.1 或更新版本
-- clone 时已初始化 submodule
+- 环境变量 PATH 中包含 `render-svg` 可执行文件（或通过 `ratex-executable-path` 配置指定路径）
 
 ## 安装方式
 
-推荐直接带 submodule 克隆：
-
-```bash
-git clone --recurse-submodules https://github.com/gongshangzheng/ratex.el.git
-cd ratex.el
+```elisp
+(package-vc-install '(ratex :url "https://github.com/elij/ratex.el"))
 ```
 
-如果你已经 clone 了仓库但没拉 submodule：
-
-```bash
-git submodule update --init --recursive
-```
-
-## Emacs 配置
-
-先把仓库中的 `lisp/` 加入 `load-path`，再加载 `ratex`：
+或者
 
 ```elisp
-(add-to-list 'load-path "/path/to/ratex.el/lisp")
+(add-to-list 'load-path "/path/to/ratex.el")
 (require 'ratex)
 ```
 
-或者使用 `use-package`（推荐 straight.el 用户）：
+或者
 
 ```elisp
 (use-package ratex
+  :vc (:url "https://github.com/elij/ratex.el")
   :config
   (global-ratex-mode 1))
 ```
 
-当前 buffer 手动启用：
+在当前 buffer 手动启用：
 
 ```elisp
 M-x ratex-mode
 ```
 
-或者给常见模式自动启用：
+或者为常见的文本和数学模式自动启用：
 
 ```elisp
 (require 'ratex)
 (global-ratex-mode 1)
 ```
 
-在 Org 文件里，也可以通过关键字做单文件控制：
+在 Org 文件中，你还可以通过关键字对单个文件进行控制：
 
 ```org
 #+ratex: t
 ```
 
-如果想对某个 Org 文件关闭它，可以写 `#+ratex: nil` 或 `#+ratex: off`。
-即使启用了 `global-ratex-mode`，这个文件级设置也会生效。
+使用 `#+ratex: nil`（或 `off`）可以对特定的 Org 文件禁用该功能，即便已经启用了 `global-ratex-mode`。
 
-如果你想自己写 hook，也可以这样：
+等效的显式 hook 设置：
 
 ```elisp
 (add-hook 'latex-mode-hook #'ratex-mode)
@@ -96,68 +87,37 @@ M-x ratex-mode
 (add-hook 'markdown-mode-hook #'ratex-mode)
 ```
 
-## 自动下载机制
+## 如何工作
 
-`ratex-mode` 启动时会检查后端二进制是否存在：
+数学片段通过 `ratex-render-math-batch-async` 以单次批处理的方式异步渲染。该函数会执行由 `ratex-executable-path`（默认为 `"render-svg"`）配置的二进制程序。进程将片段内容字符串传递给可执行文件，并接收渲染后的 SVG 数据作为响应。
 
-```text
-backend/target/release/ratex-editor-backend
-```
+当光标进入或移出数学片段时，`ratex.el` 会触发专用钩子：
 
-如果二进制不存在，Emacs 会自动从最新的 GitHub Release 下载对应平台的可执行文件：
+* `ratex-enter-fragment-hook`：当光标进入片段时执行。钩子函数接收两个参数：片段属性列表（plist）和缓存的 SVG 图像对象（如果没有缓存则为 `nil`）。
+* `ratex-leave-fragment-hook`：当光标离开片段时执行。钩子函数接收一个参数：刚刚离开的片段属性列表。
 
-```bash
-https://github.com/gongshangzheng/ratex.el/releases/latest
-```
+默认情况下，当光标进入一个片段时，它的行内 overlay 预览将被隐藏。当光标离开该片段时，它会被再次异步渲染并更新。
 
-下载成功后，会直接启动 backend。
+## 使用方法
 
-## 如何使用
+交互模型遵循以下逻辑：
 
-当前交互逻辑是：
+* 启用 `ratex-mode` 时，将渲染当前 buffer 中可见的公式。
+* 当光标进入数学片段时，行内 overlay 预览隐藏，并运行 `ratex-enter-fragment-hook`。
+* 当光标停留在该片段内时，不会自动发生后台渲染。
+* 当光标离开该片段时，运行 `ratex-leave-fragment-hook`，并且仅重新渲染该片段。
 
-- 打开并启用 `ratex-mode` 后，会先全量渲染当前 buffer 里的公式
-- 光标进入公式后，预览会隐藏
-- 光标停留在公式内部时，不会触发持续渲染
-- 光标离开该公式后，只会重渲染刚刚编辑的那一段
+原生支持所有 LaTeX 分隔符。
 
-也就是说，平时不会在每个命令后全量刷新，而是采用"打开时全量渲染 + 编辑时隐藏 + 离开后局部渲染"的模式。
-
-当前原型支持的分隔符有：
-
-- `\(...\)`
-- `\[...\]`
-
-本库目前不支持使用美元符号分隔的数学公式写法。请统一使用
-`\(...\)` 和 `\[...\]`，这两种形式在当前代码里更简单，也更不容易出错。
-如果需要转换已有的美元符号公式，可以运行：
-
-```elisp
-M-x ratex-convert-delimiters
-```
-
-它会将 `$$...$$` 替换为 `\[...\]`，将 `$...$` 替换为 `\(...\)`。
-
-默认会跳过这些情况，不做公式渲染：
-
-- 公式位于代码块中（例如 Org src/example/verbatim block，Markdown fenced code block）
-- 分隔符被转义时（例如 `\$`、`\\(`、`\\[`）
-
-也可以手动触发当前 buffer 的全量预览刷新：
+你可以通过以下命令手动触发 buffer 全量刷新：
 
 ```elisp
 M-x ratex-refresh-previews
 ```
 
-如果你想手动重新下载 backend：
+## 示例
 
-```elisp
-M-x ratex-download-backend
-```
-
-## 使用示例
-
-在 LaTeX、Org 或 Markdown buffer 里，把光标放在下面的公式内部：
+在 LaTeX、Org 或 Markdown buffer 中，将光标放在公式内部：
 
 ```tex
 \(\frac{1}{2}\)
@@ -166,93 +126,102 @@ M-x ratex-download-backend
 或者：
 
 ```tex
-\[
-\int_0^1 x^2\,dx
-\]
+$$\int_0^1 x^2\,dx$$
 ```
 
-`ratex.el` 会把公式发送给 Rust backend，收到 SVG 后通过 overlay 在 buffer 中显示预览。
+`ratex.el` 会异步渲染该片段，并通过 overlay 显示 SVG 预览。
 
-## 可配置项
+## 自定义配置
 
-目前比较常用的自定义变量有：
+在 `ratex-render.el` 中定义的配置选项：
 
-- `ratex-backend-root`：显式指定 ratex.el 仓库根目录
-- `ratex-backend-release-repo`：托管后端 Release 的 GitHub 仓库
-- `ratex-font-dir`：KaTeX `.ttf` 字体文件所在目录（默认为仓库内的 `vendor/ratex-core/fonts`）
-- `ratex-font-size`：发送给 backend 的 SVG 字号
-- `ratex-svg-padding`：发送给 backend 的 SVG 边距
-- `ratex-dark-render-color` / `ratex-light-render-color`：会根据当前 frame 的 `background-mode` 选择的默认公式颜色
-- `ratex-render-color`：公式渲染颜色覆盖；当它为 `nil` 时，会使用上面的深色/浅色默认值
-- `ratex-edit-preview`：编辑时的预览样式（`nil`、`posframe` 或 `minibuffer`）
-- `ratex-dark-posframe-background-color` / `ratex-light-posframe-background-color`：会根据当前 frame 的 `background-mode` 选择的 posframe 背景色
-- `ratex-posframe-background-color`：posframe 背景色覆盖；当它为 `nil` 时，会使用上面的深色/浅色默认值
-- `ratex-theme-change-refresh-scope`：切换主题后是刷新所有 `ratex-mode` buffer、只刷新当前 buffer，还是不自动刷新
-- `ratex-auto-download-backend`：是否自动下载 backend
-- `ratex-backend-binary`：backend 二进制路径
-
-### 编辑预览
-
-`ratex-edit-preview` 开启后，编辑公式时会显示实时预览：
-
-- `nil` — 编辑时不显示预览（默认）
-- `posframe` — 在光标附近弹出浮动窗口；可能会遮挡附近内容
-- `minibuffer` — 在 minibuffer 中显示预览；轻量且不会遮挡 buffer 内容
+* `ratex-font-size`：后端 SVG 字体大小（默认为 `16.0`）。
+* `ratex-color`：传递给后端渲染器的公式颜色字符串（默认为 `"default"`，它会动态使用当前 Emacs 主题的前景色；也可以是显式的颜色名称或十六进制字符串）。
+* `ratex-executable-path`：用于渲染的可执行文件路径（默认为 `"render-svg"`）。
 
 ### 配置示例
 
 ```elisp
 (use-package ratex
   :config
-  (setq ratex-backend-root "~/.emacs.d/straight/repos/ratex.el/")
-  (setq ratex-dark-render-color "white")
-  (setq ratex-light-render-color "black")
-  (setq ratex-edit-preview 'minibuffer)
-  (setq ratex-dark-posframe-background-color "black")
-  (setq ratex-light-posframe-background-color "white")
+  (setq ratex-color "default")
+  (setq ratex-font-size 16.0)
+  (setq ratex-executable-path "render-svg")
   (global-ratex-mode 1))
 ```
 
-如果你想无视当前主题、强制使用单一颜色，可以直接设置覆盖变量：
+如果你希望无论当前主题如何都使用确定的公式颜色：
 
 ```elisp
-(setq ratex-render-color "white")
-(setq ratex-posframe-background-color "black")
+(setq ratex-color "#ffffff")
 ```
 
-如果你想控制切换主题后的自动刷新行为，可以这样设置：
+## 实时预览编辑
+
+你可以通过将 `ratex-enter-fragment-hook` 和 `ratex-leave-fragment-hook` 结合 `after-change-functions` 使用，来实现片段内的实时编辑预览。
+
+### Posframe 实时编辑
+
+以下示例使用 `posframe` 显示一个悬浮子窗口，该窗口会随着你的输入而更新：
 
 ```elisp
-(setq ratex-theme-change-refresh-scope 'all)     ; 默认值
-;; 或：
-;; (setq ratex-theme-change-refresh-scope 'current)
-;; (setq ratex-theme-change-refresh-scope nil)
+(defun ratex-posframe-update (&rest _)
+  "Update posframe preview while editing inside a fragment."
+  (when-let* ((current (ratex--active-fragment-at-point)))
+    (ratex-render-math-batch-async
+     (list (plist-get current :content))
+     (lambda (svgs)
+       (when-let* ((svg (car svgs)))
+         (posframe-show " *ratex-preview-posframe*"
+                        :string (propertize " " 'display (create-image svg 'svg t))
+                        :position (plist-get current :begin)))))))
+
+(add-hook 'ratex-enter-fragment-hook
+          (lambda (fragment image)
+            (add-hook 'after-change-functions #'ratex-posframe-update nil t)
+            (when image
+              (posframe-show " *ratex-preview-posframe*"
+                             :string (propertize " " 'display image)
+                             :position (plist-get fragment :begin)))))
+
+(add-hook 'ratex-leave-fragment-hook
+          (lambda (_)
+            (remove-hook 'after-change-functions #'ratex-posframe-update t)
+            (posframe-hide " *ratex-preview-posframe*")))
 ```
 
-如果后端找不到 KaTeX 字体（例如使用下载的 Release 二进制不在仓库目录下），
-可以通过 `ratex-font-dir` 指定字体目录：
+### Overlay 实时编辑
+
+以下示例将一个内联 overlay 附加在公式文本的正下方：
 
 ```elisp
-(setq ratex-font-dir "/path/to/ratex.el/vendor/ratex-core/fonts")
+(defvar ratex-demo-overlay nil)
+
+(defun ratex-overlay-update (&rest _)
+  "Update inline overlay preview while editing inside a fragment."
+  (when-let* ((current (ratex--active-fragment-at-point)))
+    (ratex-render-math-batch-async
+     (list (plist-get current :content))
+     (lambda (svgs)
+       (when-let* ((svg (car svgs))
+                   (ov ratex-demo-overlay))
+         (move-overlay ov (plist-get current :end) (plist-get current :end))
+         (overlay-put ov 'after-string
+                      (concat "\n" (propertize " " 'display (create-image svg 'svg t)))))))))
+
+(add-hook 'ratex-enter-fragment-hook
+          (lambda (fragment image)
+            (add-hook 'after-change-functions #'ratex-overlay-update nil t)
+            (setq ratex-demo-overlay (make-overlay (plist-get fragment :end)
+                                                   (plist-get fragment :end)))
+            (when image
+              (overlay-put ratex-demo-overlay 'after-string
+                           (concat "\n" (propertize " " 'display image))))))
+
+(add-hook 'ratex-leave-fragment-hook
+          (lambda (_)
+            (remove-hook 'after-change-functions #'ratex-overlay-update t)
+            (when ratex-demo-overlay
+              (delete-overlay ratex-demo-overlay)
+              (setq ratex-demo-overlay nil))))
 ```
-
-如果你的加载方式比较特殊，自动探测 backend 路径仍然失败，建议直接设置
-`ratex-backend-root`。你也可以执行下面的命令查看当前解析到的后端路径：
-
-```elisp
-M-x ratex-diagnose-backend
-```
-
-## 当前状态
-
-这还是一个早期原型。目前主链路已经可用，但仍然有不少可以继续打磨的地方：
-
-- 更懂模式语法的公式检测
-- 更稳健的过期响应处理
-- 更友好的错误提示
-- 面向 MELPA 等包管理器的打包
-
-## 许可证说明
-
-当前仓库包含我们自己的 `ratex.el` 集成代码，以及 `vendor/ratex-core`
-这个上游 submodule。上游部分保持其原有许可证和历史。

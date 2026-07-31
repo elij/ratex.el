@@ -69,7 +69,34 @@
                   (expect (plist-get fragment :content) :to-equal "x"))
                 (let ((fragments (ratex-fragments-in-buffer)))
                   (expect (length fragments) :to-be 1)
-                  (expect (plist-get (car fragments) :content) :to-equal "x")))))
+                  (expect (plist-get (car fragments) :content) :to-equal "x"))))
+
+          (it "should detect LaTeX environment blocks"
+              (with-temp-buffer
+                (latex-mode)
+                (insert "text \\begin{align}\na &= b\n\\end{align} text")
+                (let ((fragments (ratex-fragments-in-buffer)))
+                  (expect (length fragments) :to-be 1)
+                  (expect (plist-get (car fragments) :content)
+                          :to-equal "\\begin{align}\na &= b\n\\end{align}"))))
+
+          (it "should correctly handle formulas containing internal parentheses and brackets"
+              (with-temp-buffer
+                (latex-mode)
+                (insert "a \\(f(x)\\) b \\[g[y]\\] c")
+                (let ((fragments (ratex-fragments-in-buffer)))
+                  (expect (length fragments) :to-be 2)
+                  (expect (plist-get (nth 0 fragments) :content) :to-equal "f(x)")
+                  (expect (plist-get (nth 1 fragments) :content) :to-equal "g[y]"))))
+
+          (it "should detect dollar sign math formulas"
+              (with-temp-buffer
+                (latex-mode)
+                (insert "inline $x+1$ and display $$y+2$$")
+                (let ((fragments (ratex-fragments-in-buffer)))
+                  (expect (length fragments) :to-be 2)
+                  (expect (plist-get (nth 0 fragments) :content) :to-equal "x+1")
+                  (expect (plist-get (nth 1 fragments) :content) :to-equal "y+2")))))
 
 (describe "ratex"
           (it "should auto-enable the minor mode only in supported major modes"
@@ -204,10 +231,6 @@
                   (spy-on 'ratex-render-math-batch-async :and-call-fake
                           (lambda (math-strings _cb)
                             (setq rendered (append rendered math-strings))))
-                  (spy-on 'ratex--drop-stale-overlays :and-return-value nil)
-                  (spy-on 'ratex--visible-fragments :and-call-fake
-                          (lambda () (ratex-fragments-in-buffer)))
-                  (spy-on 'ratex--schedule-full-refresh-scan :and-return-value nil)
                   (ratex-refresh-previews)
                   (expect rendered :to-equal '("y")))))
 
@@ -222,33 +245,22 @@
                   (spy-on 'ratex-render-math-batch-async :and-call-fake
                           (lambda (math-strings _cb)
                             (setq rendered (append rendered math-strings))))
-                  (spy-on 'ratex--drop-stale-overlays :and-return-value nil)
-                  (spy-on 'ratex--visible-fragments :and-call-fake
-                          (lambda () (ratex-fragments-in-buffer)))
-                  (spy-on 'ratex--schedule-full-refresh-scan :and-return-value nil)
                   (ratex-refresh-previews t)
                   (expect (sort rendered #'string<) :to-equal '("x" "y")))))
 
-          (it "should queue refresh tasks and run them in batch sizes"
+          (it "should render all missing fragments in a single batch when refreshing"
               (with-temp-buffer
                 (latex-mode)
                 (ratex-reset-buffer-state)
-                (let ((ratex--refresh-batch-size 2)
-                      rendered)
+                (let (rendered)
                   (insert "\\(a\\) \\(b\\) \\(c\\)")
                   (syntax-propertize (point-max))
                   (setq-local ratex-mode t)
                   (spy-on 'ratex-render-math-batch-async :and-call-fake
                           (lambda (math-strings _cb)
                             (setq rendered (append rendered math-strings))))
-                  (spy-on 'ratex--drop-stale-overlays :and-return-value nil)
-                  (spy-on 'ratex--visible-fragments :and-call-fake
-                          (lambda () (ratex-fragments-in-buffer)))
-                  (spy-on 'ratex--schedule-refresh-batch :and-return-value nil)
-                  (spy-on 'ratex--schedule-full-refresh-scan :and-return-value nil)
                   (ratex-refresh-previews t)
-                  (expect (sort rendered #'string<) :to-equal '("a" "b"))
-                  (expect (length ratex--refresh-queue) :to-be 1)))))
+                  (expect (sort rendered #'string<) :to-equal '("a" "b" "c"))))))
 
 (describe "ratex--effective-color"
           (it "should resolve default color to frame foreground color or black"
@@ -295,7 +307,7 @@
                   (expect key-a :not :to-equal key-b)))))
 
 (describe "ratex-render error handling"
-          (it "should display render errors in error-indicative SVG overlays with correctly escaped XML entities"
+          (it "should display render errors in error-indicative text overlays"
               (with-temp-buffer
                 (latex-mode)
                 (insert "\\(\\bad{\\)")
@@ -303,9 +315,6 @@
                 (let* ((fragment (car (ratex-fragments-in-buffer)))
                        (fragment-key (ratex--fragment-key fragment))
                        shown)
-                  (spy-on 'create-image :and-call-fake
-                          (lambda (data type data-p &rest props)
-                            (list :data data :type type :data-p data-p :props props)))
                   (spy-on 'ratex-show-overlay :and-call-fake
                           (lambda (key beg end image help-echo overlay-fragment)
                             (setq shown (list key beg end image help-echo overlay-fragment))))
@@ -313,11 +322,8 @@
                    fragment-key
                    fragment
                    '((ok . :false) (error . "parse error: expected } <and>")))
-                  (expect ratex--last-error :to-equal "parse error: expected } <and>")
                   (expect (nth 0 shown) :to-equal fragment-key)
-                  (expect (string-match-p "#fff59d" (plist-get (nth 3 shown) :data)) :not :to-be nil)
-                  (expect (string-match-p "#c00000" (plist-get (nth 3 shown) :data)) :not :to-be nil)
-                  (expect (string-match-p "&lt;and&gt;" (plist-get (nth 3 shown) :data)) :not :to-be nil)
+                  (expect (nth 3 shown) :to-equal (propertize " [RaTeX Error] " 'face 'error))
                   (expect (nth 4 shown) :to-equal "RaTeX render failed: parse error: expected } <and>")))))
 
 (describe "ratex-render preview initialisation and tracking"
@@ -351,9 +357,10 @@
                   (spy-on 'ratex-remove-overlay :and-call-fake
                           (lambda (key)
                             (push key removed)))
-                  (spy-on 'ratex--ensure-fragment-preview :and-call-fake
-                          (lambda (fragment)
-                            (push (plist-get fragment :content) ensured)))
+                  (spy-on 'ratex--render-batch :and-call-fake
+                          (lambda (fragments)
+                            (dolist (f fragments)
+                              (push (plist-get f :content) ensured))))
                   (goto-char 5)
                   (ratex-handle-post-command)
                   (expect removed :to-equal '("3:8:x"))
@@ -379,9 +386,10 @@
                   (spy-on 'ratex-remove-overlay :and-call-fake
                           (lambda (key)
                             (push key removed)))
-                  (spy-on 'ratex--ensure-fragment-preview :and-call-fake
-                          (lambda (fragment)
-                            (push (plist-get fragment :content) ensured)))
+                  (spy-on 'ratex--render-batch :and-call-fake
+                          (lambda (fragments)
+                            (dolist (f fragments)
+                              (push (plist-get f :content) ensured))))
                   (ratex-handle-post-command)
                   (expect removed :to-be nil)
                   (expect ensured :to-be nil))))
@@ -399,9 +407,10 @@
                   (ratex-show-overlay "1:6:x" 1 6 "IMG" nil fragment)
                   (goto-char 3)
                   (spy-on 'ratex-fragment-at-point :and-return-value nil)
-                  (spy-on 'ratex--ensure-fragment-preview :and-call-fake
-                          (lambda (value)
-                            (push (plist-get value :content) ensured)))
+                  (spy-on 'ratex--render-batch :and-call-fake
+                          (lambda (fragments)
+                            (dolist (f fragments)
+                              (push (plist-get f :content) ensured))))
                   (ratex-handle-post-command)
                   (expect (ratex-rendered-overlay-at-point-p) :to-be nil)
                   (expect (plist-get ratex--active-fragment :content) :to-equal "x")
@@ -464,16 +473,16 @@
                             (lambda (frag)
                               (setq exited-frag frag))
                             nil t)
-                  (spy-on 'ratex--ensure-fragment-preview :and-return-value nil)
+                  (spy-on 'ratex--render-batch :and-return-value nil)
                   (goto-char 9)
                   (ratex-handle-post-command)
                   (expect exited-frag :to-equal fragment)))))
 
 (describe "ratex-render process coordination"
-          (it "should process multiple requests for the same formula through a single async render call"
+          (it "should process multiple formulas in a single async render call"
               (with-temp-buffer
                 (latex-mode)
-                (insert "\\(A\\) xx \\(A\\)")
+                (insert "\\(A\\) xx \\(B\\)")
                 (syntax-propertize (point-max))
                 (let* ((fragments (ratex-fragments-in-buffer))
                        (first (nth 0 fragments))
@@ -494,11 +503,10 @@
                   (spy-on 'ratex--display-if-visible :and-call-fake
                           (lambda (fragment-key _fragment _response)
                             (push fragment-key seen)))
-                  (ratex--ensure-fragment-preview first)
-                  (ratex--ensure-fragment-preview second)
+                  (ratex--render-batch fragments)
                   (expect request-count :to-be 1)
-                  (expect passed-strings :to-equal '("A"))
-                  (funcall callback '("<svg/>"))
+                  (expect passed-strings :to-equal '("A" "B"))
+                  (funcall callback '("<svg1/>" "<svg2/>"))
                   (expect (sort seen #'string<)
                           :to-equal (sort (list first-key second-key) #'string<))))))
 

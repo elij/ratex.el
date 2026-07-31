@@ -1,8 +1,7 @@
 # ratex.el
 
 > [!NOTE]  
-This is a fork of [ratex.el](https://github.com/gongshangzheng/ratex.el) with changes that can no longer be merged upstream. Doesn't have the ratex RPC (instead uses batch CLI) and uses tex-mode.el for parsing. While it is compatible with GPL 3, this hasn't been defined by the original author.
-
+> This is a fork of [ratex.el](https://github.com/gongshangzheng/ratex.el) with changes that can no longer be merged upstream. Doesn't have the ratex RPC (instead uses batch CLI) and uses tex-mode.el for parsing. While it is compatible with GPL 3, this hasn't been defined by the original author.
 
 [简体中文](./README.zh-CN.md)
 
@@ -20,6 +19,7 @@ It is designed to render LaTeX maths fragments inside Emacs with a small async b
 - SVG rendering backed by RaTeX
 - Batch rendering of maths fragments via `ratex-render-math-batch-async`
 - Entry and exit hooks for fragment interaction via `ratex-enter-fragment-hook` and `ratex-leave-fragment-hook`
+- Native parsing of all LaTeX delimiters (including `$` and `$$`) via `tex-mode.el`
 - Lightweight in-buffer rendering flow
 - Works with `latex-mode`, `LaTeX-mode`, `org-mode`, and `markdown-mode`
 
@@ -33,11 +33,9 @@ It is designed to render LaTeX maths fragments inside Emacs with a small async b
 ## Requirements
 
 - Emacs 29.1 or newer
-- A checkout with submodules initialised
-- The `render-svg` executable (or path configured via `ratex-executable-path`)
+- The `render-svg` executable available in your PATH (or configured via `ratex-executable-path`)
 
 ## Installation
-
 
 ```elisp
 (package-vc-install '(ratex :url "https://github.com/elij/ratex.el"))
@@ -91,23 +89,25 @@ Equivalent explicit hook setup:
 
 ## How it works
 
-Maths fragments are rendered asynchronously in batches using `ratex-render-math-batch-async`, which executes the binary configured by `ratex-executable-path` (defaulting to `"render-svg"`). The process passes fragment content strings to the executable and receives rendered SVG data in response.
+Maths fragments are rendered asynchronously in a single batch using `ratex-render-math-batch-async`, which executes the binary configured by `ratex-executable-path` (defaulting to `"render-svg"`). The process passes fragment content strings to the executable and receives rendered SVG data in response.
 
 When point moves into or out of maths fragments, `ratex.el` triggers dedicated hooks:
-- `ratex-enter-fragment-hook`: executed when point enters a fragment. Hook functions receive two arguments: the fragment property list and the cached SVG image object (or `nil` if not cached).
-- `ratex-leave-fragment-hook`: executed when point leaves a fragment. Hook functions receive one argument: the fragment property list that was exited.
+
+* `ratex-enter-fragment-hook`: executed when point enters a fragment. Hook functions receive two arguments: the fragment property list and the cached SVG image object (or `nil` if not cached).
+* `ratex-leave-fragment-hook`: executed when point leaves a fragment. Hook functions receive one argument: the fragment property list that was exited.
 
 By default, when point enters a fragment, its inline overlay preview is hidden. When point leaves that fragment, it is rendered again and updated asynchronously.
 
 ## Usage
 
 The interaction model operates as follows:
-- When `ratex-mode` is enabled, visible formulas in the current buffer are rendered once.
-- When point enters a maths fragment, the inline overlay preview is hidden, and `ratex-enter-fragment-hook` runs.
-- While point stays inside that fragment, no background rendering occurs automatically.
-- When point leaves that fragment, `ratex-leave-fragment-hook` runs, and only that fragment is rendered again.
 
-All LaTeX delimiters are supported.
+* When `ratex-mode` is enabled, visible formulas in the current buffer are rendered.
+* When point enters a maths fragment, the inline overlay preview is hidden, and `ratex-enter-fragment-hook` runs.
+* While point stays inside that fragment, no background rendering occurs automatically.
+* When point leaves that fragment, `ratex-leave-fragment-hook` runs, and only that fragment is rendered again.
+
+All LaTeX delimiters are supported natively.
 
 You can trigger a full buffer refresh manually with:
 
@@ -126,9 +126,7 @@ In a LaTeX, Org, or Markdown buffer, place point inside:
 or:
 
 ```tex
-\[
-\int_0^1 x^2\,dx
-\]
+$$\int_0^1 x^2\,dx$$
 ```
 
 `ratex.el` renders the fragment asynchronously and displays the SVG preview through an overlay.
@@ -137,9 +135,9 @@ or:
 
 Customisation options defined in `ratex-render.el`:
 
-- `ratex-font-size`: backend SVG font size (defaults to `16.0`).
-- `ratex-color`: formula colour string passed to the backend renderer (defaults to `"default"`, which dynamically uses the current frame foreground colour, or an explicit colour name or hex string).
-- `ratex-executable-path`: executable path for rendering (defaults to `"render-svg"`).
+* `ratex-font-size`: backend SVG font size (defaults to `16.0`).
+* `ratex-color`: formula colour string passed to the backend renderer (defaults to `"default"`, which dynamically uses the current frame foreground colour, or an explicit colour name or hex string).
+* `ratex-executable-path`: executable path for rendering (defaults to `"render-svg"`).
 
 ### Example configuration
 

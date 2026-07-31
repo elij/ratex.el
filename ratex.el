@@ -1,7 +1,7 @@
 ;;; ratex.el --- Inline LaTeX previews via RaTeX -*- lexical-binding: t; -*-
 
 ;; Author: ratex.el contributors
-;; Version: 0.1.5
+;; Version: 0.1.6
 ;; Package-Requires: ((emacs "29.1"))
 ;; Keywords: tex, math, tools
 
@@ -76,40 +76,6 @@ return `disable' for values such as `nil' or `off'; otherwise return nil."
   ratex-mode
   ratex--maybe-enable
   :group 'ratex)
-
-;;;###autoload
-(defun ratex-convert-delimiters ()
-  "Convert dollar math delimiters in the current buffer.
-$$...$$ becomes \\[...\\] and $...$ becomes \\(...\\).
-Escaped delimiters (\\$) are left unchanged."
-  (interactive)
-  (save-excursion
-    (goto-char (point-min))
-    (let ((in-display-math nil)
-          (in-inline-math nil))
-      (while (re-search-forward "\\$\\$?" nil t)
-        (let ((matched (match-string 0))
-              (beg (match-beginning 0))
-              (end (match-end 0))
-              (syntax (syntax-ppss)))
-          ;; Ensure we are not inside a comment or a verbatim block
-          (unless (or (nth 4 syntax) (eq (nth 7 syntax) 2))
-            (cond
-             ;; Case 1: Double dollars $$
-             ((string= matched "$$")
-              (delete-region beg end)
-              (if in-display-math
-                  (insert "\\]")
-                (insert "\\["))
-              (setq in-display-math (not in-display-math)))
-             
-             ;; Case 2: Single dollar $ (only if not inside a $$ block)
-             ((not in-display-math)
-              (delete-region beg end)
-              (if in-inline-math
-                  (insert "\\)")
-                (insert "\\("))
-              (setq in-inline-math (not in-inline-math))))))))))
 
 (add-hook 'hack-local-variables-hook #'ratex--apply-org-keyword)
 

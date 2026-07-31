@@ -2,6 +2,9 @@
 
 ;;; Code:
 
+(require 'seq)
+(require 'subr-x)
+
 (defvar-local ratex--overlays nil)
 
 (defun ratex--overlay-table ()
@@ -53,14 +56,12 @@
 
 (defun ratex--overlay-entry-at-point ()
   "Return (KEY . OVERLAY) for a visible RaTeX overlay at point, or nil."
-  (let (found)
-    (dolist (overlay (overlays-at (point)) found)
-      (let ((key (overlay-get overlay 'ratex-key)))
-        (when (and key
-                   (not found)
-                   (hash-table-p ratex--overlays)
-                   (eq overlay (gethash key ratex--overlays)))
-          (setq found (cons key overlay)))))))
+  (seq-some (lambda (overlay)
+              (when-let* ((key (overlay-get overlay 'ratex-key))
+                          ((hash-table-p ratex--overlays))
+                          ((eq overlay (gethash key ratex--overlays))))
+                (cons key overlay)))
+            (overlays-at (point))))
 
 (defun ratex-rendered-overlay-at-point-p ()
   "Return non-nil when point is inside a visible RaTeX rendered overlay."
@@ -68,9 +69,8 @@
 
 (defun ratex-overlay-fragment-at-point ()
   "Return fragment metadata from the RaTeX overlay at point, or nil."
-  (let ((entry (ratex--overlay-entry-at-point)))
-    (when entry
-      (overlay-get (cdr entry) 'ratex-fragment))))
+  (when-let* ((entry (ratex--overlay-entry-at-point)))
+    (overlay-get (cdr entry) 'ratex-fragment)))
 
 (defun ratex-overlay-for-key (key)
   "Return the overlay for KEY, or nil."
@@ -80,9 +80,9 @@
 
 (defun ratex-overlay-image-for-key (key)
   "Return the rendered image for overlay KEY, or nil."
-  (let ((overlay (ratex-overlay-for-key key)))
-    (when (overlayp overlay)
-      (overlay-get overlay 'ratex-image))))
+  (when-let* ((overlay (ratex-overlay-for-key key))
+              ((overlayp overlay)))
+    (overlay-get overlay 'ratex-image)))
 
 (defun ratex--overlay-apply-style (overlay)
   "Apply stored image in OVERLAY to its display property."
@@ -96,9 +96,9 @@
                            (expt text-scale-mode-step text-scale-mode-amount)
                          1.0)))
     (dolist (ov (overlays-in (point-min) (point-max)))
-      (let ((img (overlay-get ov 'ratex-image)))
-        (when (and img (eq (car img) 'image))
-          (setf (image-property img :scale) current-scale))))))
+      (when-let* ((img (overlay-get ov 'ratex-image))
+                  ((eq (car img) 'image)))
+        (setf (image-property img :scale) current-scale)))))
 
 (add-hook 'text-scale-mode-hook #'ratex-update-overlay-scale)
 
