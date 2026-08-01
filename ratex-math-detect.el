@@ -55,16 +55,16 @@
   (if fixed-delim-len
       (let ((c-beg (+ beg fixed-delim-len))
             (c-end (- end fixed-delim-len)))
-        (list :begin beg
-              :end end
-              :content (buffer-substring-no-properties c-beg c-end)
-              :open (buffer-substring-no-properties beg c-beg)
-              :close (buffer-substring-no-properties c-end end)))
-    (list :begin beg
-          :end end
-          :content (buffer-substring-no-properties beg end)
-          :open ""
-          :close "")))
+        `((begin . ,beg)
+          (end . ,end)
+          (content . ,(buffer-substring-no-properties c-beg c-end))
+          (open . ,(buffer-substring-no-properties beg c-beg))
+          (close . ,(buffer-substring-no-properties c-end end))))
+    `((begin . ,beg)
+      (end . ,end)
+      (content . ,(buffer-substring-no-properties beg end))
+      (open . "")
+      (close . ""))))
 
 (defun ratex-fragments-in-buffer (&optional beg end)
   "Return all math fragments between BEG and END."
@@ -122,11 +122,11 @@
     (nreverse fragments)))
 
 (defun ratex-fragment-at-point ()
-  "Return the math fragment around point as a plist."
+  "Return the math fragment around point as an alist."
   (let ((pos (point)))
     (seq-find (lambda (f)
-                (and (<= (plist-get f :begin) pos)
-                     (< pos (plist-get f :end))))
+                (and (<= (alist-get 'begin f) pos)
+                     (< pos (alist-get 'end f))))
               (ratex-fragments-in-buffer (max (point-min) (- pos 2000))
                                          (min (point-max) (+ pos 2000))))))
 

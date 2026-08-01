@@ -11,7 +11,7 @@ It is designed to render LaTeX maths fragments inside Emacs with a small async b
 
 ## Demo
 
-![ratex.el demo](./assets/demo.gif)
+<img alt="demo" src="https://github.com/user-attachments/assets/9fea763f-a4a9-4314-8468-d6430a25cf0b" />
 
 ## Features
 
@@ -27,7 +27,6 @@ It is designed to render LaTeX maths fragments inside Emacs with a small async b
 
 - `ratex.el`: core minor mode, user commands, and global setup
 - `ratex-render.el`: asynchronous batch rendering engine executing `ratex-executable-path`
-- `ratex-overlays.el`: overlay management and image display lifecycle
 - `ratex-math-detect.el`: LaTeX maths delimiter parsing and fragment detection
 
 ## Requirements
@@ -53,8 +52,19 @@ Or
 ```elisp
 (use-package ratex
   :vc (:url "https://github.com/elij/ratex.el")
-  :config
-  (global-ratex-mode 1))
+  :after exec-path-from-shell
+  :defer t
+  :commands (global-ratex-mode)
+  
+  :hook ((after-init . global-ratex-mode)
+         (markdown-ts-mode . ratex-mode)
+         (gptel-mode . (lambda ()
+                         (add-hook 'gptel-post-response-functions
+                                   (lambda (_beg _end)
+                                     (when (bound-and-true-p ratex-mode)
+                                       (ratex-refresh-previews)))
+                                   nil t)))))
+
 ```
 
 Enable it manually in the current buffer:

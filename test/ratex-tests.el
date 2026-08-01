@@ -15,7 +15,7 @@
                 (syntax-propertize (point-max))
                 (goto-char 11)
                 (let ((fragment (ratex-fragment-at-point)))
-                  (expect (plist-get fragment :content) :to-equal "x^2"))))
+                  (expect (alist-get 'content fragment) :to-equal "x^2"))))
 
           (it "should track points so that it does not detect fragments immediately after a closing delimiter"
               (with-temp-buffer
@@ -32,7 +32,7 @@
                 (syntax-propertize (point-max))
                 (goto-char 7)
                 (let ((fragment (ratex-fragment-at-point)))
-                  (expect (plist-get fragment :content) :to-equal "x+1"))))
+                  (expect (alist-get 'content fragment) :to-equal "x+1"))))
 
           (it "should ignore escaped delimiters during bulk buffer scanning"
               (with-temp-buffer
@@ -41,7 +41,7 @@
                 (syntax-propertize (point-max))
                 (let ((fragments (ratex-fragments-in-buffer)))
                   (expect (length fragments) :to-be 1)
-                  (expect (plist-get (car fragments) :content) :to-equal "y"))))
+                  (expect (alist-get 'content (car fragments)) :to-equal "y"))))
 
           (it "should ignore escaped delimiters when checking the fragment at point"
               (with-temp-buffer
@@ -66,10 +66,10 @@
                 (search-forward "\\(x")
                 (let ((fragment (ratex-fragment-at-point)))
                   (expect fragment :not :to-be nil)
-                  (expect (plist-get fragment :content) :to-equal "x"))
+                  (expect (alist-get 'content fragment) :to-equal "x"))
                 (let ((fragments (ratex-fragments-in-buffer)))
                   (expect (length fragments) :to-be 1)
-                  (expect (plist-get (car fragments) :content) :to-equal "x"))))
+                  (expect (alist-get 'content (car fragments)) :to-equal "x"))))
 
           (it "should detect LaTeX environment blocks"
               (with-temp-buffer
@@ -77,7 +77,7 @@
                 (insert "text \\begin{align}\na &= b\n\\end{align} text")
                 (let ((fragments (ratex-fragments-in-buffer)))
                   (expect (length fragments) :to-be 1)
-                  (expect (plist-get (car fragments) :content)
+                  (expect (alist-get 'content (car fragments))
                           :to-equal "\\begin{align}\na &= b\n\\end{align}"))))
 
           (it "should correctly handle formulas containing internal parentheses and brackets"
@@ -86,8 +86,8 @@
                 (insert "a \\(f(x)\\) b \\[g[y]\\] c")
                 (let ((fragments (ratex-fragments-in-buffer)))
                   (expect (length fragments) :to-be 2)
-                  (expect (plist-get (nth 0 fragments) :content) :to-equal "f(x)")
-                  (expect (plist-get (nth 1 fragments) :content) :to-equal "g[y]"))))
+                  (expect (alist-get 'content (nth 0 fragments)) :to-equal "f(x)")
+                  (expect (alist-get 'content (nth 1 fragments)) :to-equal "g[y]"))))
 
           (it "should detect dollar sign math formulas"
               (with-temp-buffer
@@ -95,8 +95,8 @@
                 (insert "inline $x+1$ and display $$y+2$$")
                 (let ((fragments (ratex-fragments-in-buffer)))
                   (expect (length fragments) :to-be 2)
-                  (expect (plist-get (nth 0 fragments) :content) :to-equal "x+1")
-                  (expect (plist-get (nth 1 fragments) :content) :to-equal "y+2")))))
+                  (expect (alist-get 'content (nth 0 fragments)) :to-equal "x+1")
+                  (expect (alist-get 'content (nth 1 fragments)) :to-equal "y+2")))))
 
 (describe "ratex"
           (it "should auto-enable the minor mode only in supported major modes"
@@ -158,7 +158,10 @@
           (it "should detect a rendered overlay within its exact character range"
               (with-temp-buffer
                 (insert "abcdef")
-                (ratex-show-overlay "1:4:x" 1 4 "IMG")
+                (let ((ov (make-overlay 1 4)))
+                  (overlay-put ov 'ratex-key "1:4:x")
+                  (overlay-put ov 'ratex-image "IMG")
+                  (setf (alist-get "1:4:x" ratex--overlays nil nil #'equal) ov))
                 (goto-char 1)
                 (expect (ratex-rendered-overlay-at-point-p) :not :to-be nil)
                 (goto-char 3)
@@ -169,19 +172,22 @@
           (it "should retrieve the correct fragment metadata from the overlay at point"
               (with-temp-buffer
                 (insert "abcdef")
-                (ratex-show-overlay
-                 "2:5:x" 2 5 "IMG" nil
-                 '(:begin 2 :end 5 :content "x" :open "\\(" :close "\\)"))
+                (let ((ov (make-overlay 2 5))
+                      (fragment '((begin . 2) (end . 5) (content . "x") (open . "\\(") (close . "\\)"))))
+                  (overlay-put ov 'ratex-key "2:5:x")
+                  (overlay-put ov 'ratex-image "IMG")
+                  (overlay-put ov 'ratex-fragment fragment)
+                  (setf (alist-get "2:5:x" ratex--overlays nil nil #'equal) ov))
                 (goto-char 3)
                 (let ((fragment (ratex-overlay-fragment-at-point)))
-                  (expect (plist-get fragment :content) :to-equal "x"))))
+                  (expect (alist-get 'content fragment) :to-equal "x"))))
 
           (it "should ignore stale overlay references not matching the active table state"
               (with-temp-buffer
                 (insert "abcdef")
                 (let ((overlay (make-overlay 2 5)))
                   (overlay-put overlay 'ratex-key "stale")
-                  (puthash "stale" (make-overlay 1 2) (ratex--overlay-table))
+                  (setf (alist-get "stale" ratex--overlays nil nil #'equal) (make-overlay 1 2))
                   (goto-char 3)
                   (expect (ratex-rendered-overlay-at-point-p) :to-be nil)
                   (delete-overlay overlay)))))
@@ -194,7 +200,7 @@
                 (syntax-propertize (point-max))
                 (let ((fragments (ratex-fragments-in-buffer)))
                   (expect (length fragments) :to-be 2)
-                  (expect (mapcar (lambda (f) (plist-get f :content)) fragments)
+                  (expect (mapcar (lambda (f) (alist-get 'content f)) fragments)
                           :to-equal '("x" "y+1")))))
 
           (it "should respect range limits when scanning a buffer"
@@ -204,7 +210,7 @@
                 (syntax-propertize (point-max))
                 (let ((fragments (ratex-fragments-in-buffer 9 (point-max))))
                   (expect (length fragments) :to-be 1)
-                  (expect (plist-get (car fragments) :content) :to-equal "y")))))
+                  (expect (alist-get 'content (car fragments)) :to-equal "y")))))
 
 (describe "ratex-render rendering coordination"
           (it "should queue visible fragments for rendering while excluding the active fragment"
@@ -218,7 +224,7 @@
                        (targets (ratex--fragments-to-render fragments active)))
                   (expect (length fragments) :to-be 2)
                   (expect (length targets) :to-be 1)
-                  (expect (plist-get (car targets) :content) :to-equal "y"))))
+                  (expect (alist-get 'content (car targets)) :to-equal "y"))))
 
           (it "should render all non-active previews when refreshing"
               (with-temp-buffer
@@ -313,18 +319,15 @@
                 (insert "\\(\\bad{\\)")
                 (syntax-propertize (point-max))
                 (let* ((fragment (car (ratex-fragments-in-buffer)))
-                       (fragment-key (ratex--fragment-key fragment))
-                       shown)
-                  (spy-on 'ratex-show-overlay :and-call-fake
-                          (lambda (key beg end image help-echo overlay-fragment)
-                            (setq shown (list key beg end image help-echo overlay-fragment))))
+                       (fragment-key (ratex--fragment-key fragment)))
                   (ratex--display-response
                    fragment-key
                    fragment
                    '((ok . :false) (error . "parse error: expected } <and>")))
-                  (expect (nth 0 shown) :to-equal fragment-key)
-                  (expect (nth 3 shown) :to-equal (propertize " [RaTeX Error] " 'face 'error))
-                  (expect (nth 4 shown) :to-equal "RaTeX render failed: parse error: expected } <and>")))))
+                  (let ((ov (alist-get fragment-key ratex--overlays nil nil #'equal)))
+                    (expect ov :not :to-be nil)
+                    (expect (overlay-get ov 'display) :to-equal (propertize " [RaTeX Error] " 'face 'error))
+                    (expect (overlay-get ov 'help-echo) :to-equal "RaTeX render failed: parse error: expected } <and>"))))))
 
 (describe "ratex-render preview initialisation and tracking"
           (it "should render all previews on initialisation then hide the active fragment overlay"
@@ -337,13 +340,13 @@
                   (spy-on 'ratex-refresh-previews :and-call-fake
                           (lambda (&optional include)
                             (setq include-active include)))
-                  (spy-on 'ratex-remove-overlay :and-call-fake
+                  (spy-on 'ratex--remove-overlay :and-call-fake
                           (lambda (key)
                             (setq removed-key key)))
                   (ratex-initialize-previews)
                   (expect include-active :not :to-be nil)
                   (expect removed-key :to-equal "3:8:x")
-                  (expect (plist-get ratex--active-fragment :content) :to-equal "x"))))
+                  (expect (alist-get 'content ratex--active-fragment) :to-equal "x"))))
 
           (it "should hide overlays when the cursor enters a fragment and render them when it leaves"
               (with-temp-buffer
@@ -354,13 +357,13 @@
                   (setq-local ratex-mode t)
                   (ratex-reset-buffer-state)
                   (setq-local ratex--active-fragment nil)
-                  (spy-on 'ratex-remove-overlay :and-call-fake
+                  (spy-on 'ratex--remove-overlay :and-call-fake
                           (lambda (key)
                             (push key removed)))
                   (spy-on 'ratex--render-batch :and-call-fake
                           (lambda (fragments)
                             (dolist (f fragments)
-                              (push (plist-get f :content) ensured))))
+                              (push (alist-get 'content f) ensured))))
                   (goto-char 5)
                   (ratex-handle-post-command)
                   (expect removed :to-equal '("3:8:x"))
@@ -383,13 +386,13 @@
                 (insert "y")
                 (syntax-propertize (point-max))
                 (let (removed ensured)
-                  (spy-on 'ratex-remove-overlay :and-call-fake
+                  (spy-on 'ratex--remove-overlay :and-call-fake
                           (lambda (key)
                             (push key removed)))
                   (spy-on 'ratex--render-batch :and-call-fake
                           (lambda (fragments)
                             (dolist (f fragments)
-                              (push (plist-get f :content) ensured))))
+                              (push (alist-get 'content f) ensured))))
                   (ratex-handle-post-command)
                   (expect removed :to-be nil)
                   (expect ensured :to-be nil))))
@@ -399,21 +402,25 @@
                 (latex-mode)
                 (insert "\\(x\\)z")
                 (syntax-propertize (point-max))
-                (let ((fragment '(:begin 1 :end 6 :content "x" :open "\\(" :close "\\)"))
+                (let ((fragment '((begin . 1) (end . 6) (content . "x") (open . "\\(") (close . "\\)")))
                       ensured)
                   (setq-local ratex-mode t)
                   (ratex-reset-buffer-state)
                   (setq-local ratex--active-fragment nil)
-                  (ratex-show-overlay "1:6:x" 1 6 "IMG" nil fragment)
+                  (let ((ov (make-overlay 1 6)))
+                    (overlay-put ov 'ratex-key "1:6:x")
+                    (overlay-put ov 'ratex-image "IMG")
+                    (overlay-put ov 'ratex-fragment fragment)
+                    (setf (alist-get "1:6:x" ratex--overlays nil nil #'equal) ov))
                   (goto-char 3)
                   (spy-on 'ratex-fragment-at-point :and-return-value nil)
                   (spy-on 'ratex--render-batch :and-call-fake
                           (lambda (fragments)
                             (dolist (f fragments)
-                              (push (plist-get f :content) ensured))))
+                              (push (alist-get 'content f) ensured))))
                   (ratex-handle-post-command)
                   (expect (ratex-rendered-overlay-at-point-p) :to-be nil)
-                  (expect (plist-get ratex--active-fragment :content) :to-equal "x")
+                  (expect (alist-get 'content ratex--active-fragment) :to-equal "x")
                   (goto-char 7)
                   (ratex-handle-post-command)
                   (expect ensured :to-equal '("x")))))
@@ -429,7 +436,7 @@
                        (cache-key (ratex--cache-key fragment))
                        (mock-img (list 'image :type 'svg :data "<svg/>"))
                        called-args)
-                  (puthash cache-key '((ok . t) (svg . "<svg/>")) ratex--render-cache)
+                  (setf (alist-get cache-key ratex--render-cache nil nil #'equal) '((ok . t) (svg . "<svg/>")))
                   (spy-on 'ratex--image-from-response :and-return-value mock-img)
                   (add-hook 'ratex-enter-fragment-hook
                             (lambda (frag img)

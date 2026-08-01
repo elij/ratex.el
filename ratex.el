@@ -1,7 +1,7 @@
 ;;; ratex.el --- Inline LaTeX previews via RaTeX -*- lexical-binding: t; -*-
 
 ;; Author: ratex.el contributors
-;; Version: 0.1.6
+;; Version: 0.1.7
 ;; Package-Requires: ((emacs "29.1"))
 ;; Keywords: tex, math, tools
 
@@ -11,7 +11,6 @@
 
 ;;; Code:
 (require 'subr-x)
-(require 'ratex-overlays)
 (require 'ratex-render)
 
 ;;;###autoload

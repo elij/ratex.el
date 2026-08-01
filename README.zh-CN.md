@@ -27,7 +27,6 @@
 
 - `ratex.el`：核心 minor mode，用户命令和全局设置
 - `ratex-render.el`：执行 `ratex-executable-path` 的异步批处理渲染引擎
-- `ratex-overlays.el`：overlay 管理和图像显示生命周期
 - `ratex-math-detect.el`：LaTeX 数学分隔符解析和片段检测
 
 ## 环境要求
@@ -53,8 +52,17 @@
 ```elisp
 (use-package ratex
   :vc (:url "https://github.com/elij/ratex.el")
-  :config
-  (global-ratex-mode 1))
+  :after exec-path-from-shell
+  :defer t
+  :commands (global-ratex-mode)
+  :hook ((after-init . global-ratex-mode)
+         (markdown-ts-mode . ratex-mode)
+         (gptel-mode . (lambda ()
+                         (add-hook 'gptel-post-response-functions
+                                   (lambda (_beg _end)
+                                     (when (bound-and-true-p ratex-mode)
+                                       (ratex-refresh-previews)))
+                                   nil t)))))
 ```
 
 在当前 buffer 手动启用：
